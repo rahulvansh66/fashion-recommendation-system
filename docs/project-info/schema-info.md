@@ -28,61 +28,61 @@ The H&M fashion recommendation dataset consists of three core tables forming a c
 **Records**: 105,542
 **Purpose**: Master product catalog with hierarchical classification and descriptive attributes
 
-| Column | Basic Type | Detailed Type | Description | Relationships |
-|--------|------------|---------------|-------------|---------------|
-| article_id | STRING | varchar(12) | Unique product identifier (12 digits) | Primary Key |
-| product_code | STRING | varchar(10) | Product code for grouping variants | - |
-| prod_name | STRING | varchar(255) | Product name/title | - |
-| product_type_no | INTEGER | smallint | Product category code | - |
-| product_type_name | STRING | varchar(100) | Product category name | - |
-| product_group_name | STRING | varchar(100) | High-level product group | - |
-| graphical_appearance_no | INTEGER | int | Visual appearance code | - |
-| graphical_appearance_name | STRING | varchar(50) | Visual appearance description | - |
-| colour_group_code | STRING | varchar(10) | Color identifier | - |
-| colour_group_name | STRING | varchar(50) | Color name | - |
-| perceived_colour_value_id | INTEGER | smallint | Perceived color value code | - |
-| perceived_colour_value_name | STRING | varchar(50) | Perceived color value | - |
-| perceived_colour_master_id | INTEGER | smallint | Master color category | - |
-| perceived_colour_master_name | STRING | varchar(50) | Master color name | - |
-| department_no | INTEGER | smallint | Department code | - |
-| department_name | STRING | varchar(100) | Department name | - |
-| index_code | STRING | varchar(5) | Index code for classification | - |
-| index_name | STRING | varchar(50) | Index name | - |
-| index_group_no | INTEGER | smallint | Index group code | - |
-| index_group_name | STRING | varchar(50) | Index group name | - |
-| section_no | INTEGER | smallint | Section code | - |
-| section_name | STRING | varchar(100) | Section name | - |
-| garment_group_no | INTEGER | smallint | Garment group code | - |
-| garment_group_name | STRING | varchar(100) | Garment group name | - |
-| detail_desc | STRING | text | Detailed product description | - |
+| Column | Basic Type | Detailed Type | Description |
+|--------|------------|---------------|-------------|
+| article_id | STRING | varchar(12) | Unique product identifier (12 digits) - Primary Key |
+| product_code | STRING | varchar(10) | Product code for grouping variants |
+| prod_name | STRING | varchar(255) | Product name/title |
+| product_type_no | INTEGER | smallint | Product category code |
+| product_type_name | STRING | varchar(100) | Product category name |
+| product_group_name | STRING | varchar(100) | High-level product group |
+| graphical_appearance_no | INTEGER | int | Visual appearance code |
+| graphical_appearance_name | STRING | varchar(50) | Visual appearance description |
+| colour_group_code | STRING | varchar(10) | Color identifier |
+| colour_group_name | STRING | varchar(50) | Color name |
+| perceived_colour_value_id | INTEGER | smallint | Perceived color value code |
+| perceived_colour_value_name | STRING | varchar(50) | Perceived color value |
+| perceived_colour_master_id | INTEGER | smallint | Master color category |
+| perceived_colour_master_name | STRING | varchar(50) | Master color name |
+| department_no | INTEGER | smallint | Department code |
+| department_name | STRING | varchar(100) | Department name |
+| index_code | STRING | varchar(5) | Index code for classification |
+| index_name | STRING | varchar(50) | Index name |
+| index_group_no | INTEGER | smallint | Index group code |
+| index_group_name | STRING | varchar(50) | Index group name |
+| section_no | INTEGER | smallint | Section code |
+| section_name | STRING | varchar(100) | Section name |
+| garment_group_no | INTEGER | smallint | Garment group code |
+| garment_group_name | STRING | varchar(100) | Garment group name |
+| detail_desc | STRING | text | Detailed product description |
 
 ### 2. Customers Table
 **File**: `data/full/customers.csv`
 **Records**: 1,371,980
 **Purpose**: Customer demographics and engagement preferences
 
-| Column | Basic Type | Detailed Type | Description | Relationships |
-|--------|------------|---------------|-------------|---------------|
-| customer_id | STRING | varchar(64) | Unique customer identifier (hashed for privacy) | Primary Key |
-| FN | STRING | varchar(10) | Possibly "First Name" indicator (mostly empty) | - |
-| Active | STRING | varchar(10) | Customer activity status (mostly empty) | - |
-| club_member_status | STRING | varchar(20) | Club membership status (ACTIVE, INACTIVE, PRE-CREATE) | - |
-| fashion_news_frequency | STRING | varchar(20) | Fashion news subscription frequency | - |
-| age | INTEGER | smallint | Customer age in years | - |
-| postal_code | STRING | varchar(64) | Customer postal code (hashed for privacy) | - |
+| Column | Basic Type | Detailed Type | Description |
+|--------|------------|---------------|-------------|
+| customer_id | STRING | varchar(64) | Unique customer identifier (hashed for privacy) - Primary Key |
+| FN | STRING | varchar(10) | Possibly "First Name" indicator (mostly empty) |
+| Active | STRING | varchar(10) | Customer activity status (mostly empty) |
+| club_member_status | STRING | varchar(20) | Club membership status (ACTIVE, INACTIVE, PRE-CREATE) |
+| fashion_news_frequency | STRING | varchar(20) | Fashion news subscription frequency |
+| age | INTEGER | smallint | Customer age in years |
+| postal_code | STRING | varchar(64) | Customer postal code (hashed for privacy) |
 
 ### 3. Transactions Table
 **File**: `data/full/transactions_train.csv`
 **Records**: 31,788,324
 **Purpose**: Fact table recording all customer purchase interactions (training set)
 
-| Column | Basic Type | Detailed Type | Description | Relationships |
-|--------|------------|---------------|-------------|---------------|
-| t_dat | DATE | date | Transaction date (YYYY-MM-DD format) | - |
-| customer_id | STRING | varchar(64) | Customer identifier (hashed) | → Links to customers.customer_id |
-| article_id | STRING | varchar(12) | Product identifier | → Links to articles.article_id |
-| price | FLOAT | decimal(10,6) | Transaction price (normalized/scaled value) | - |
-| sales_channel_id | INTEGER | smallint | Sales channel identifier (1 or 2) | - |
+| Column | Basic Type | Detailed Type | Description |
+|--------|------------|---------------|-------------|
+| t_dat | DATE | date | Transaction date (YYYY-MM-DD format) |
+| customer_id | STRING | varchar(64) | Customer identifier (hashed) → Links to customers.customer_id |
+| article_id | STRING | varchar(12) | Product identifier → Links to articles.article_id |
+| price | FLOAT | decimal(10,6) | Transaction price (normalized/scaled value) |
+| sales_channel_id | INTEGER | smallint | Sales channel identifier (1 or 2) |
 
 ## Relationship Model
 
