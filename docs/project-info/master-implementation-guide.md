@@ -306,7 +306,7 @@ The H&M dataset provides rich fashion domain context that enables sophisticated 
 
 **Documentation Network:**
 - [H&M Schema Documentation](schema-info.md) - Dataset structure and relationships
-- [Downloaded Files Inventory](downloaded-implementations/README.md) - Source code catalog
+- [Downloaded Files Inventory](ref-project/model-imp/README.md) - Source code catalog
 - [Feature Pipeline Analysis](feature-pipeline-analysis.md) - Detailed feature engineering
 - [Training Pipeline Analysis](training-pipeline-analysis.md) - Model architecture deep-dive
 - [Inference Pipeline Analysis](inference-pipeline-analysis.md) - Real-time serving implementation
