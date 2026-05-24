@@ -1,0 +1,23 @@
+# Ignore dependency directories
+node_modules/
+venv/
+env/
+
+# Ignore build outputs and binaries
+dist/
+build/
+*.exe
+*.pyc
+tmp/
+
+# Ignore environment secrets (Crucial for security!)
+.env
+.env.local
+*.pem
+
+# Ignore large data files or logs
+*.log
+data/*.csv
+
+# Ignore my docs, its for my knowledege and planing 
+docs/my-docs/

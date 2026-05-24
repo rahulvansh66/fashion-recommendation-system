@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "deny": [
+      "Read(.env*)",
+      "Read(docs/my-docs)",
+      "Read(docs/my-docs/)",
+      "Read(docs/my-docs/**)",
+      "Read(./docs/my-docs)",
+      "Read(./docs/my-docs/)",
+      "Read(./docs/my-docs/**)"
+    ]
+  }
+}

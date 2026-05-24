@@ -1,0 +1,7 @@
+# Ignore environment secrets (Crucial for security!)
+.env
+.env.local
+*.pem
+
+# Ignore large data files or logs
+dataset/
