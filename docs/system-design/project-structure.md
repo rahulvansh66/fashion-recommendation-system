@@ -504,7 +504,7 @@ fashion-recommendation-system/
 │
 ├── docs/
 │   ├── system-design/                      # Current architecture documentation
-│   │   ├── final-project-structure.md      # This file
+│   │   ├── project-structure.md      # This file
 │   │   ├── infrastructure-layer.md
 │   │   ├── schema-info.md
 │   │   ├── project-description.md

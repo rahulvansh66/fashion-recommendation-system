@@ -15,7 +15,7 @@
 ## Learning Project Overview
 
 ### System Purpose
-Production-scale recommendation system for fashion e-commerce using H&M dataset, designed to mimic real-world systems while optimizing for learning costs and time.
+Production-scale recommendation system for fashion e-commerce using H&M dataset, designed to mimic real-world scalable systems while optimizing for learning costs and time.
 
 ### Key Learning Objectives
 - **ML Engineering:** Implement two-tower models, embedding systems, 4-stage recommendation pipelines

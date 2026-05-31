@@ -15,7 +15,7 @@ Build a production-grade, scalable ML recommendation system on the H&M dataset. 
 | **SageMaker-centric ML** | All ML inference goes through SageMaker for managed capabilities |
 | **FAISS over OpenSearch** | Portable vector search; no managed service cost |
 | **S3 as data lake** | No DynamoDB — eliminates per-read/write costs |
-| **Serverless API** | FastAPI + Mangum on Lambda — pay-per-request |
+| **Serverless API** | FastAPI + AWS Lambda Web Adapter on Lambda — pay-per-request |
 
 **Target total cost:** $25–40 over 2–3 months with local-first development.
 
@@ -110,17 +110,23 @@ Feature Pipeline (PySpark)
 
 ### 3. Inference Pipeline (Request Path)
 
+The system has two independent request paths. They share the same Lambda + API Gateway infrastructure but have no shared code or data flow beyond that.
+
+#### Path A — Recommendation Request (`GET /recommendations/{user_id}`)
+
 ```
-Client Request
+Client Request  →  GET /recommendations/{user_id}
       ↓
 API Gateway
       ↓
-Lambda (FastAPI + Mangum)
+Lambda (FastAPI + AWS Lambda Web Adapter)
       ↓
  ┌─────────────────────────────────────────────┐
  │ 1. Fetch user features (Redis / S3)          │
  │ 2. SageMaker Endpoint → user embedding       │
+ │    (Two-Tower user tower)                    │
  │ 3. Lambda FAISS → top-100 candidates         │
+ │    (faiss_items.index — item embeddings)     │
  │ 4. SageMaker Endpoint → CatBoost re-ranking  │
  │ 5. Return top-K ranked recommendations       │
  └─────────────────────────────────────────────┘
@@ -128,7 +134,30 @@ Lambda (FastAPI + Mangum)
 JSON Response
 ```
 
-#### FAISS Lambda Optimization
+#### Path B — Chatbot Request (`POST /chat`)  *(future)*
+
+```
+Client Request  →  POST /chat  {"message": "something casual for summer"}
+      ↓
+API Gateway
+      ↓
+Lambda (FastAPI + AWS Lambda Web Adapter)
+      ↓
+ ┌─────────────────────────────────────────────┐
+ │ 1. Embed user query (text encoder)           │
+ │ 2. FAISS search over faiss_rag.index         │
+ │    → top-K relevant product description      │
+ │      chunks                                  │
+ │ 3. LLM call: chunks + query → answer         │
+ │ 4. Return natural language response          │
+ └─────────────────────────────────────────────┘
+      ↓
+JSON Response  {"answer": "...", "products": [...]}
+```
+
+These two paths use **separate FAISS indices** built from different data and serving different purposes. `faiss_items.index` contains Two-Tower item embeddings; `faiss_rag.index` contains article description text chunk embeddings.
+
+#### FAISS Lambda Optimization (Path A)
 
 - **Cold start**: ~500ms (index loaded from S3 into Lambda memory at initialization)
 - **Warm execution**: <1ms FAISS search (index cached in Lambda memory across invocations)
@@ -138,9 +167,13 @@ JSON Response
 ### 4. Application Layer
 
 - **Framework**: FastAPI
-- **Local**: `uvicorn` dev server
-- **AWS**: Lambda + Mangum adapter (zero code changes between environments)
-- **Entry point**: `GET /recommendations/{user_id}`
+- **Local**: `uvicorn` dev server in Docker container
+- **AWS**: Lambda + AWS Lambda Web Adapter (zero code changes — same container runs everywhere)
+- **Migration**: True zero-code-change deployment — LWA runs as Lambda extension, forwards events as HTTP to FastAPI
+- **Endpoints**:
+  - `GET /recommendations/{user_id}` — Two-Tower + CatBoost recommendation pipeline
+  - `POST /chat` — RAG chatbot *(future)*
+  - `GET /health` — health check
 
 ### 5. Infrastructure Layer
 
@@ -152,18 +185,37 @@ JSON Response
 
 ## ML Pipeline — Component Table
 
+### Core Recommendation Pipeline
+
 | Pipeline Step | Local Dev | AWS Production | Purpose |
 |---------------|-----------|----------------|---------|
-| Data processing | PySpark `local[*]` | AWS Glue | Feature engineering |
+| Data ingestion + preprocessing | PySpark `local[*]` | AWS Glue | Raw CSV → clean parquet |
+| Feature engineering | PySpark `local[*]` | AWS Glue | Clean data → model-ready features |
 | Two-Tower training | Docker + PyTorch | SageMaker Training Job | Learn user/item embeddings |
-| Two-Tower inference | Local PyTorch server | SageMaker Endpoint | Generate embeddings at request time |
-| FAISS index build | Local script | Lambda | Build ANN index from item embeddings |
-| FAISS search | Local FAISS | Lambda + FAISS | Retrieve top-100 candidates |
+| Two-Tower inference | Local PyTorch server | SageMaker Endpoint | Generate user embedding at request time |
+| Recommendation FAISS index build | Local script | Lambda | Build ANN index from item embeddings |
+| Recommendation FAISS search | Local FAISS | Lambda + FAISS | Retrieve top-100 candidates |
 | CatBoost training | Local CatBoost | SageMaker Training Job | Train ranking model |
 | CatBoost inference | Local server | SageMaker Endpoint | Re-rank candidates |
-| API orchestration | FastAPI + uvicorn | Lambda + Mangum | Route requests, coordinate pipeline |
-| Caching | Local Redis | ElastiCache | Hot-path feature lookups |
-| Storage | Local filesystem | S3 | Data lake, model artifacts, FAISS index |
+| API orchestration | FastAPI + uvicorn | Lambda + AWS Lambda Web Adapter | Route requests, coordinate pipeline |
+| Feature caching | Local Redis | ElastiCache | Hot-path user/item feature lookups |
+| Storage | Local filesystem | S3 | Data lake, model artifacts, FAISS indices |
+
+### Optional Enrichment (content_features/)
+
+| Pipeline Step | Local Dev | AWS Production | Purpose |
+|---------------|-----------|----------------|---------|
+| LLM fine-tuning | Local HuggingFace + PEFT | SageMaker Training Job | Fine-tune tag extraction model |
+| Tag batch inference | Local script | SageMaker Batch Transform | Article descriptions → style tags |
+| User tag aggregation | Local PySpark | AWS Glue | Per-user tag features from purchase history |
+
+### Standalone Chatbot — RAG (future)
+
+| Pipeline Step | Local Dev | AWS Production | Purpose |
+|---------------|-----------|----------------|---------|
+| RAG index build | Local script | Lambda | Chunk + embed article descriptions → faiss_rag.index |
+| RAG retrieval | Local FAISS | Lambda + FAISS | User query → relevant product chunks |
+| LLM generation | Local LLM server | SageMaker Endpoint | Chunks + query → natural language answer |
 
 ---
 
@@ -209,7 +261,7 @@ By routing all ML inference through SageMaker, the following production capabili
 | S3 data paths | `./data/file.parquet` | `s3://bucket/file.parquet` |
 | Redis | `localhost:6379` | ElastiCache endpoint |
 | boto3 | `endpoint_url='http://localhost:4566'` (LocalStack) | No `endpoint_url` |
-| FastAPI | `uvicorn.run(app)` | `Mangum(app)` as Lambda handler |
+| FastAPI | `uvicorn` in Docker | AWS Lambda Web Adapter (same container) |
 | SageMaker SDK | `instance_type='local'` | `instance_type='ml.m5.large'` |
 | FAISS index | Local `.index` file | S3-backed, loaded into Lambda memory |
 
@@ -373,14 +425,13 @@ user_features.write.parquet(os.getenv('DATA_PATH') + 'user_features/')
 
 ---
 
-### Pattern 6 — FastAPI → Lambda with Mangum
+### Pattern 6 — FastAPI → Lambda with AWS Lambda Web Adapter
 
-Write the API as a standard FastAPI app. Running locally uses `uvicorn`; on Lambda, `Mangum` wraps the app as a Lambda handler — zero code changes to the route logic.
+Write the API as a standard FastAPI app. The same application code and Docker container runs locally and on Lambda with **absolutely zero code modifications**. AWS Lambda Web Adapter (a Lambda extension) runs as a sidecar process that intercepts Lambda events and forwards them as standard HTTP requests to your FastAPI server.
 
 ```python
 # api/main.py
 from fastapi import FastAPI
-from mangum import Mangum
 import uvicorn
 import os
 
@@ -396,10 +447,38 @@ async def get_recommendations(user_id: str, k: int = 10):
 # Local development
 if __name__ == '__main__':
     uvicorn.run(app, host='0.0.0.0', port=8000)
-
-# AWS Lambda handler (same file — Lambda imports this)
-lambda_handler = Mangum(app)
 ```
+
+**Dockerfile (same for local and AWS):**
+
+```dockerfile
+FROM public.ecr.aws/docker/library/python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY src/ .
+
+# Install AWS Lambda Web Adapter as a Lambda Extension
+# Only active when running on Lambda; no effect locally
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.8.4 /lambda-adapter /opt/extensions/lambda-adapter
+
+# Environment variables for LWA (Lambda ignores PORT, uses adapter)
+ENV PORT=8000
+
+# Same command for local and Lambda - no conditional logic needed
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**Key advantages:**
+- **Zero code changes**: Application never imports or references any Lambda-specific code
+- **Language agnostic**: Works with any HTTP server (Node.js, Go, Rust, Java, etc.)
+- **True portability**: Same container image runs locally, on ECS, on Lambda — anywhere
+- **No lock-in**: Application has zero AWS dependencies; pure FastAPI code
 
 ---
 
@@ -472,21 +551,7 @@ services:
 
 ## Directory Structure
 
-```
-fashion-recommendation-system/
-├── system-design/              # Current architecture docs (this folder)
-│   ├── architecture-overview.md
-│   └── schema-info.md
-├── dataset/
-│   ├── full/                   # Raw H&M CSVs (gitignored)
-│   └── sample/                 # Dev subset (10K users, 5K items, 100K txns)
-├── docs/
-│   ├── ref-project-info/       # Legacy reference implementation (archive only)
-│   ├── superpowers/            # Implementation plans
-│   ├── implementation-info/    # Implementation decisions
-│   └── outcomes-info/          # Results and analysis
-└── terraform/                  # Infrastructure-as-code (planned)
-```
+Full directory structure with rationale is documented in [`system-design/project-structure.md`](project-structure.md).
 
 ---
 

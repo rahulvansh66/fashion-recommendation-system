@@ -92,18 +92,18 @@ grep -c ",,$" dataset/full/*.csv  # Empty last fields
 
 ### Core Documentation Areas
 - `docs/ref-project-info/`: **REFERENCE PROJECT ONLY** - Contains old code and documentation from previous implementation. Only consult when explicitly asked to reference legacy code.
-- `system-design/`: **CURRENT IMPLEMENTATION TARGET** - All current project info, plans, designs, and documentation for what we're building now.
+- `docs/system-design/`: **CURRENT IMPLEMENTATION TARGET** - All current project info, plans, designs, and documentation for what we're building now.
 - `docs/superpowers/`: Implementation plans and design specifications
 - `docs/code-explanation-info/`: Code documentation (when code is added)
 - `docs/implementation-info/`: Implementation details and decisions
 - `docs/outcomes-info/`: Results and analysis outcomes
 
 ### Key Documentation Files
-- `system-design/schema-info.md`: Complete H&M dataset schema documentation with table structures, relationships, and SQL patterns
+- `docs/system-design/schema-info.md`: Complete H&M dataset schema documentation with table structures, relationships, and SQL patterns
 
 ### Important: Reference vs Current Project
 - **Reference Project** (`docs/ref-project-info/`): Archived implementation - DO NOT use unless explicitly asked to reference old code
-- **Current Project** (`system-design/`): Active development target - use for all current work, planning, and project information
+- **Current Project** (`docs/system-design/`): Active development target - use for all current work, planning, and project information
 - When asked to "refer to reference project", only then consult `docs/ref-project-info/` as legacy reference
 
 ## Development Workflow
@@ -161,7 +161,7 @@ When working on recommendation algorithms, reference the schema documentation fo
 | **FAISS Similarity Search** | Local FAISS search | **Lambda + FAISS** | Find similar items using embeddings |
 | **CatBoost Training** | Local CatBoost | **SageMaker** | Train ranking/scoring model |
 | **CatBoost Inference** | Local serving | **SageMaker Endpoint** | Score and rank candidates |
-| **API Orchestration** | FastAPI | **Lambda + Mangum** | Coordinate pipeline and business logic |
+| **API Orchestration** | FastAPI | **Lambda + AWS Lambda Web Adapter** | Coordinate pipeline and business logic |
 
 ### SageMaker-Centric ML Capabilities
 **Managed ML Features Available:**
@@ -249,10 +249,10 @@ COPY src/ .
 CMD ["python", "app.py"]
 ```
 
-7. **FastAPI → Lambda with Mangum** ✅
+7. **FastAPI → Lambda with AWS Lambda Web Adapter** ✅
 ```python
+# api/main.py - IDENTICAL code for local and AWS
 from fastapi import FastAPI
-from mangum import Mangum
 
 app = FastAPI()
 
@@ -260,13 +260,34 @@ app = FastAPI()
 def get_recommendations(user_id: str):
     return {"recommendations": []}
 
-# Local development
 if __name__ == "__main__":
-    uvicorn.run(app)
-
-# AWS Lambda (zero code changes)
-lambda_handler = Mangum(app)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
+
+```dockerfile
+# Dockerfile - Add Lambda Web Adapter as extension layer
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY src/ .
+
+# Lambda Web Adapter (only active on Lambda, no effect locally)
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.8.4 /lambda-adapter /opt/extensions/lambda-adapter
+
+ENV PORT=8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**Key advantage:** Application code has ZERO AWS dependencies. Same container runs locally via `docker run`, on Lambda, on ECS, or any container platform. True cloud portability.
+
+**Why Lambda Web Adapter over Mangum?**
+- **Mangum**: Requires `lambda_handler = Mangum(app)` in code (AWS-specific import)
+- **LWA**: Zero code changes; runs as Lambda extension (application never knows it's on Lambda)
+- **Mangum**: Python-only (ASGI/WSGI frameworks)
+- **LWA**: Language-agnostic (Node.js, Go, Rust, Java, Python, etc.)
+- **Mangum**: Good for quick prototypes
+- **LWA**: True production portability — same image on Lambda, ECS, Kubernetes, local Docker
 
 8. **Environment-Driven Configuration** ✅
 ```python

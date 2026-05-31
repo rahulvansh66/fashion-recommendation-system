@@ -84,11 +84,3 @@ The H&M fashion recommendation dataset consists of three core tables forming a c
 | price | FLOAT | decimal(10,6) | Transaction price (normalized/scaled value) |
 | sales_channel_id | INTEGER | smallint | Sales channel identifier (1 or 2) |
 
-## Relationship Model
-
-```
-CUSTOMERS (1) ─────< (M) TRANSACTIONS >(M)─── (1) ARTICLES
-  - customer_id         - customer_id            - article_id
-  - demographics        - article_id      
-  - preferences         - price, date, channel
-```
