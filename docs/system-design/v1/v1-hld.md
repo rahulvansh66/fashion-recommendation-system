@@ -6,7 +6,7 @@
 | **Version** | v1.0 |
 | **Last Updated** | 2026-05-28 |
 | **Author** | rahul.vansh |
-| **Related Docs** | [`hld.md`](../hld.md) · [`v1-deliverable.md`](../v1-deliverable.md) · [`schema-info.md`](../schema-info.md) · [`infrastructure-layer.md`](../infrastructure-layer.md) |
+| **Related Docs** | [`hld.md`](../hld.md) · [`v1-deliverable.md`](v1-deliverable.md) · [`v1-infrastructure-layer.md`](v1-infrastructure-layer.md) · [`schema-info.md`](../schema-info.md) · [`infrastructure-layer.md`](../infrastructure-layer.md) (pre-v1 reference) |
 
 ---
 

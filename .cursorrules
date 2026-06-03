@@ -1,0 +1,40 @@
+# Fashion Recommendation System — Cursor rules
+
+## V1 goal (source: `docs/system-design/v1/v1-hld.md`)
+
+Ship a learning-grade, production-pattern v1: personalized **top-10** recommendations via **Cache → Retrieve → Filter → Rank → Order** (Two-Tower + CatBoost + FAISS + Redis). Unified **FastAPI + Jinja2 + HTMX** on **ECS Fargate**, ingress via **API Gateway HTTP API** (no ALB). Offline: Glue/Step Functions + SageMaker Pipelines. Target ~**$53/mo** active; deploy/destroy with **Terraform**. Explicit demo: cache hit (~15 ms) vs miss (~190 ms) and SQS cache pre-warm.
+
+## Private docs — do not use
+
+Never reference, cite, or read **`docs/my-docs/`** or anything under it. It is personal-only.
+
+## Referece code - Just uses as inspiration when instructed 
+
+When you are instructed to use anything within **`docs/reference-code`**, treat it strictly as a reference implementation. We may take small inspirations from it, but the actual implementation can be significantly different based on our HLD in **`docs/system-design/v1/v1-hld.md`** and any additional instructions provided.
+
+Do not assume the reference code must be followed exactly. Use it only for guidance where relevant, while prioritizing the architecture, requirements, and design decisions defined in the HLD and the given instructions.
+
+If you have any doubts, ambiguities, or conflicts between the reference code, HLD, and instructions, ask follow-up questions before proceeding.
+
+## Authoritative references
+
+| Topic | Document |
+|-------|----------|
+| Requirements (MUST/SHOULD contract) | `docs/system-design/v1/v1-requirements.md` |
+| Architecture (components, AWS, data lake) | `docs/system-design/v1/v1-hld.md` |
+| Repo layout & where code lives | `docs/system-design/project-structure.md` |
+| H&M dataset schema (articles, customers, transactions) | `docs/system-design/schema-info.md` |
+
+Implementation must be traceable to **v1-requirements** and align with **v1-hld**. Place new code per **project-structure** (`src/fashion_recommendation_system/`, `configs/`, `infra/`, `pipelines/`, etc.).
+
+## Data: current vs target
+
+- **Now (pre–v1-hld rollout):** Raw H&M CSVs live under repo **`dataset/`** (e.g. `dataset/full/`). Use these for local dev and notebooks until pipelines land.
+- **During v1 implementation:** Ingest into the **S3 data lake** per v1-hld (`raw/` → `clean/` → `features/` → `models/` / `embeddings/` / `indices/`). Redis is cache only, not system of record. Same Python paths locally (LocalStack) and on AWS; env vars only for endpoints/buckets.
+
+## Implementation habits
+
+- Respect schema column names and types in **schema-info.md** (star schema: transactions fact → articles + customers).
+- Keep online path lightweight: precomputed features + SageMaker + FAISS Lambda; no heavy FE or LLM on the request path (v1 out of scope: RAG, event streaming, Cognito—see v1-hld §1.2).
+- `os.getenv()` only in `config.py`; model/feature params in `configs/` YAML.
+- Do not import from `src/` in notebooks; do not commit model artifacts or full dataset to git.

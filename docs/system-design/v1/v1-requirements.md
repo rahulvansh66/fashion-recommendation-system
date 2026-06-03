@@ -19,7 +19,7 @@
    - 4.1 [User Interface & Authentication](#41-user-interface--authentication)
    - 4.2 [Recommendation Pipeline](#42-recommendation-pipeline)
    - 4.3 [Caching & Pre-Warming](#43-caching--pre-warming)
-   - 4.4 [Backend API](#44-backend-api)
+   - 4.4 [Application Endpoints](#44-application-endpoints)
    - 4.5 [ML Inference](#45-ml-inference)
    - 4.6 [Offline Batch Pipelines](#46-offline-batch-pipelines)
    - 4.7 [Observability & Alerting](#47-observability--alerting)
@@ -78,7 +78,10 @@ This document uses **MoSCoW** prioritisation:
 ### 3.1 In Scope
 
 - End-to-end online serving pipeline: Cache → Retrieve → Filter → Rank → Order (5 stages)
-- Server-rendered web application with unified frontend and backend (FastAPI monolith on ECS Fargate)
+- Server-rendered web application: **FastAPI + Jinja2 + HTMX + Tailwind on ECS Fargate**
+- Unified monolith architecture: frontend and backend in single application
+- Single application deployment target: **ECS Fargate** (0.5 vCPU / 1.0 GB)
+- **API Gateway HTTP API + VPC Link + Cloud Map** for ingress (no ALB)
 - Visible latency demonstration (pre-warmed vs. cold recommendations)
 - Backend API with rate limiting, circuit breakers, and graceful fallbacks
 - Offline batch pipelines for data preparation, feature engineering, ML training, and index building
@@ -104,10 +107,10 @@ See [Section 8](#8-out-of-scope-v1) for the full deferred list with rationale.
 #### FR-UI-01 — Login Page
 **Priority:** MUST
 
-The system must display a login page as the application entry point. In v1, the only accepted credential pair is `rr / rr`. On successful login, the user is redirected to the user-picker page.
+The system must display a login page as the application entry point, rendered using Jinja2 templates. In v1, the only accepted credential pair is `rr / rr`. On successful login, the user is redirected to the user-picker page.
 
 **Acceptance criteria:**
-- `GET /` renders a login form.
+- `GET /` renders a login form using Jinja2 server-side templating.
 - `POST /login` with `username=rr&password=rr` sets a signed session cookie and returns HTTP 302 to the user-picker page.
 - Any other credential pair returns HTTP 401.
 
@@ -116,12 +119,13 @@ The system must display a login page as the application entry point. In v1, the 
 #### FR-UI-02 — User-Picker Page
 **Priority:** MUST
 
-After login, the system must display exactly six customer cards representing the six most-active customers in the dataset. Each card must show: `customer_id`, `age`, and `current_date` (today's UTC date, computed at page-load time).
+After login, the system must display exactly six customer cards representing the six most-active customers in the dataset. Each card must show: `customer_id`, `age`, and `current_date` (today's UTC date, computed at page-load time). The page must be styled with Tailwind CSS (CDN).
 
 **Acceptance criteria:**
-- Page renders six cards populated from the `active:users:top6` Redis key.
+- Page renders six cards populated from the `active:users:top6` Redis key using Jinja2 templating.
 - `current_date` reflects `datetime.utcnow().date().isoformat()` at render time — it changes naturally across calendar days without a deployment.
 - Each card is individually clickable.
+- Tailwind CSS is loaded via CDN (no build step required).
 
 ---
 
@@ -140,12 +144,13 @@ The first three customer cards must display a visible "pre-warmed" badge indicat
 #### FR-UI-04 — Recommendations Fragment (HTMX Partial Update)
 **Priority:** MUST
 
-Clicking a customer card must trigger an HTMX request to the backend. The recommendations for that customer must appear in-page without a full page reload.
+Clicking a customer card must trigger an HTMX request to the FastAPI backend. The recommendations for that customer must appear in-page without a full page reload. HTMX enables modern partial-update UX without an SPA framework or build pipeline.
 
 **Acceptance criteria:**
 - Clicking card N issues `GET /recommendations/{customer_id}?age={age}&date={today}&k=10` via HTMX.
 - The recommendations fragment (top-10 article list with article metadata) is injected into the page via HTMX `hx-swap`.
 - No full page reload occurs.
+- HTMX functionality is provided via CDN (no build step required).
 
 ---
 
@@ -207,7 +212,7 @@ Stage 3 must invoke the SageMaker `catboost-ranker` endpoint with a batch of fea
 
 **Acceptance criteria:**
 - Item features are fetched from Redis via a single `HMGET` call covering all remaining candidates.
-- Cross features are computed in the orchestrator Lambda before the CatBoost invocation.
+- Cross features are computed in the FastAPI application before the CatBoost invocation.
 - CatBoost returns a score per candidate, and candidates are sorted descending by score.
 
 ---
@@ -321,15 +326,16 @@ The Redis keys `popular:items:top100` and `popular:items:by_category:{category}`
 
 ---
 
-### 4.4 Application Endpoints (Unified FastAPI Monolith)
+### 4.4 Application Endpoints (Unified FastAPI Monolith on ECS Fargate)
 
 #### FR-API-01 — Health Endpoint
 **Priority:** MUST
 
-The application must expose `GET /health` returning HTTP 200 with a JSON body indicating service status. This endpoint must not require authentication and is used for service monitoring.
+The application must expose `GET /health` returning HTTP 200 with a JSON body indicating service status. This endpoint must not require authentication and is used for ECS task health checks and service monitoring.
 
 **Acceptance criteria:**
 - `GET /health` returns `{"status": "ok"}` within 200 ms under normal operating conditions.
+- The endpoint is reachable via API Gateway HTTP API → VPC Link → Cloud Map → ECS Fargate task.
 
 ---
 
@@ -358,13 +364,14 @@ The application must expose `GET /health` returning HTTP 200 with a JSON body in
 #### FR-API-04 — Recommendations Endpoint
 **Priority:** MUST
 
-`GET /recommendations/{customer_id}?age={age}&date={YYYY-MM-DD}&k=10` must invoke the five-stage online pipeline and return a JSON array of top-K articles with scores.
+`GET /recommendations/{customer_id}?age={age}&date={YYYY-MM-DD}&k=10` must invoke the five-stage online pipeline and return either an HTMX partial HTML fragment or a JSON array of top-K articles with scores (content negotiation based on `Accept` header).
 
 **Acceptance criteria:**
 - `age` and `date` are accepted as query parameters and passed as pipeline features.
 - `k` defaults to 10; values 1–50 are accepted.
-- Response JSON includes at minimum `article_id` and `score` per item.
-- A `degraded: true` flag appears in the response when any fallback was exercised.
+- When requested via HTMX (partial update): returns HTML fragment rendered with Jinja2.
+- When requested via API (JSON Accept header): returns JSON array with `article_id` and `score` per item.
+- A `degraded: true` flag appears in the response when any fallback was exercised (JSON mode) or in the HTML data attributes (HTMX mode).
 
 ---
 
@@ -377,7 +384,7 @@ The system must serve a user embedding model via a dedicated SageMaker Endpoint 
 
 **Acceptance criteria:**
 - The endpoint returns a correctly shaped `[1, 256]` tensor for any valid user feature input.
-- The endpoint is reachable from the orchestrator Lambda via the AWS SDK without additional network configuration.
+- The endpoint is reachable from the Fargate application via the AWS SDK without additional network configuration.
 
 ---
 
@@ -517,7 +524,7 @@ The following CloudWatch alarms must be configured to send notifications via SNS
 #### FR-OBS-02 — Custom Business Metrics
 **Priority:** MUST
 
-The orchestrator Lambda must emit the following custom CloudWatch metrics to the `Recommendation` namespace:
+The Fargate application must emit the following custom CloudWatch metrics to the `Recommendation` namespace:
 
 | Metric                                 | Purpose                                   |
 |----------------------------------------|-------------------------------------------|
@@ -535,10 +542,10 @@ The orchestrator Lambda must emit the following custom CloudWatch metrics to the
 #### FR-OBS-03 — Distributed Tracing
 **Priority:** SHOULD
 
-X-Ray tracing must be enabled end-to-end: API Gateway → Backend Lambda → SageMaker endpoints → FAISS Lambda. The X-Ray service map must render a coherent dependency graph of all components.
+X-Ray tracing must be enabled end-to-end: API Gateway → Fargate application → SageMaker endpoints → FAISS Lambda. The X-Ray service map must render a coherent dependency graph of all components.
 
 **Acceptance criteria:**
-- A single recommendation request produces a connected X-Ray trace covering API Gateway, the orchestrator Lambda, and both SageMaker endpoints.
+- A single recommendation request produces a connected X-Ray trace covering API Gateway, the Fargate application, and both SageMaker endpoints.
 
 ---
 
@@ -887,7 +894,7 @@ The following items are explicitly deferred. They are documented here to prevent
 
 | Requirement ID | Description (short)                         | HLD Section              |
 |----------------|---------------------------------------------|--------------------------|
-| FR-UI-01       | Login page (`rr/rr`)                        | §8.2, §6.2               |
+| FR-UI-01       | Login page (`rr/rr`)                        | §6.2, §8.1               |
 | FR-UI-02       | User-picker page (6 cards)                  | §6.3                     |
 | FR-UI-03       | Pre-warm badge on cards 1–3                 | §6.3, §12.4              |
 | FR-UI-04       | HTMX partial recommendations fragment       | §6.1, §6.2               |
@@ -897,16 +904,16 @@ The following items are explicitly deferred. They are documented here to prevent
 | FR-PIPE-04     | Stage 2: filter                             | §9.4                     |
 | FR-PIPE-05     | Stage 3: CatBoost ranking                   | §9.5                     |
 | FR-PIPE-06     | Stage 4: diversity reorder                  | §9.6                     |
-| FR-PIPE-07     | Rate limiting (two layers)                  | §7.3                     |
+| FR-PIPE-07     | Rate limiting (two layers)                  | §7                       |
 | FR-PIPE-08     | Circuit breakers & fallbacks                | §9.8                     |
 | FR-CACHE-01    | Recommendation result cache                 | §9.2, §10.3              |
 | FR-CACHE-02    | Feature caches (user + item)                | §10.3, §10.4             |
 | FR-CACHE-03    | SQS pre-warming work queue                  | §12.4                    |
 | FR-CACHE-04    | Cold-start fallback Redis keys              | §9.4, §10.3              |
-| FR-API-01      | `GET /health`                               | §8.2                     |
-| FR-API-02      | `POST /login`                               | §8.2                     |
-| FR-API-03      | `GET /users/active`                         | §8.2                     |
-| FR-API-04      | `GET /recommendations/{id}`                 | §8.2, §9                 |
+| FR-API-01      | `GET /health`                               | §8.1                     |
+| FR-API-02      | `POST /login`                               | §8.1                     |
+| FR-API-03      | `GET /users/active`                         | §8.1                     |
+| FR-API-04      | `GET /recommendations/{id}`                 | §8.1, §9                 |
 | FR-ML-01       | Two-tower SageMaker endpoint                | §11.1                    |
 | FR-ML-02       | FAISS Lambda serving                        | §11.2                    |
 | FR-ML-03       | CatBoost SageMaker endpoint                 | §11.3                    |
@@ -944,7 +951,7 @@ The following items are explicitly deferred. They are documented here to prevent
 | NFR-COST-01    | Active session cost < $60/month            | §15.1                    |
 | NFR-COST-02    | One-command infrastructure teardown        | §2.1, §15               |
 | NFR-COST-03    | No over-provisioning                       | §15.1                    |
-| NFR-MAINT-01   | Unified codebase                           | §6.1, §8.2               |
+| NFR-MAINT-01   | Unified codebase                           | §6.1, §8.1               |
 | NFR-MAINT-02   | Environment parity (local / dev / prod)    | §14.3, CLAUDE.md         |
 | NFR-MAINT-03   | Canary rollback within 5 minutes           | §14.4                    |
 | NFR-MAINT-04   | 100% Terraform IaC coverage               | §14.1                    |
