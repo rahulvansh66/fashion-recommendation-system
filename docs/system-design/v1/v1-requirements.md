@@ -657,7 +657,7 @@ All stateless components (ECS Fargate application, FAISS Lambda) must scale hori
 #### NFR-SCALE-02 — Architecture Parity (Dev vs. Full Dataset)
 **Priority:** MUST
 
-The architecture must be identical for the 10K-user development sample and the full 1.37M-user H&M dataset. Scaling must require only instance sizing and data path changes — no structural modifications.
+The architecture must be identical for the ~1K-user development sample and the full 1.37M-user H&M dataset. Scaling must require only instance sizing and data path changes — no structural modifications.
 
 ---
 
@@ -841,7 +841,7 @@ Every push to the `main` branch must trigger the full CI/CD pipeline (lint, unit
 | ID       | Constraint                                                                                                 |
 |----------|------------------------------------------------------------------------------------------------------------|
 | CON-01   | The system must deploy entirely within a single AWS region (us-east-1) in v1.                              |
-| CON-02   | The development dataset is limited to 10K users, 5K articles, 100K transactions to control training cost.  |
+| CON-02   | The development dataset is limited to ~1K stratified users (articles and transactions derived from sampled users) to control training cost.  |
 | CON-03   | No real user authentication infrastructure (Cognito, OAuth) is required for v1. `rr/rr` is the only valid credential. |
 | CON-04   | ECS Fargate tasks must use 0.5 vCPU / 1.0 GB sizing for the unified application. SageMaker endpoints must use `ml.t3.medium` instances unless a performance NFR cannot be satisfied at that sizing. |
 | CON-05   | The FAISS index must fit within Lambda's 10 GB memory limit (estimated < 300 MB for the full H&M dataset). |

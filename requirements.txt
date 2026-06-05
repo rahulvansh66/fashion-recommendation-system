@@ -1,0 +1,3 @@
+# Application / script environment (FastAPI, pipelines, CLI — no notebook stack)
+# Future: requirements-serving.txt, requirements-training.txt (see docs/system-design/project-structure.md)
+-r requirements-dev.txt

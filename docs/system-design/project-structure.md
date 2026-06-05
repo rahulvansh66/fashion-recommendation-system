@@ -500,7 +500,7 @@ fashion-recommendation-system/
 │
 ├── dataset/
 │   ├── full/                               # Raw H&M CSVs (gitignored)
-│   └── sample/                             # 10K users, 5K items, 100K transactions
+│   └── sample/                             # ~1K stratified users (see notebooks/stratified_user_sampling.ipynb)
 │
 ├── docs/
 │   ├── system-design/                      # Current architecture documentation

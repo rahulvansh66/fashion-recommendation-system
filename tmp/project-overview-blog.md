@@ -1,3 +1,8 @@
+ # Linkedin Post
+
+ 
+
+
 # Building a Fashion Recommendation System That Won't Bankrupt Me
 
 There's a particular kind of project that every engineer eventually attempts: the one where you try to rebuild a slice of Spotify, Pinterest, or Netflix in your own backyard, on your own dime, mostly to prove to yourself that you actually understand how the magic works. This is that project.

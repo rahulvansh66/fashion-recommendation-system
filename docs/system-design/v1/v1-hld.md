@@ -114,7 +114,7 @@ Every component decision in this document traces back to one or more of these se
 | 4 | **FAISS over a managed vector DB** | Portable, free, fits dataset size. OpenSearch and Pinecone are documented as scale-up paths. |
 | 5 | **S3 as the single data lake** | One storage substrate. No DynamoDB. Redis is a cache layer, not a system of record. |
 | 6 | **Loose coupling, well-defined interfaces** | Each component has a single responsibility and a documented contract. Swapping a component should not require touching its neighbors. |
-| 7 | **Production patterns over production scale** | Architecture is designed for full H&M scale (1.37M users, 105K items, 31.8M transactions) and deployed on the dev sample (10K users, 5K items, 100K transactions). Architecture is identical; only instance sizing changes. |
+| 7 | **Production patterns over production scale** | Architecture is designed for full H&M scale (1.37M users, 105K items, 31.8M transactions) and deployed on the dev sample (~1K stratified users; articles and transactions derived from sampled users). Architecture is identical; only instance sizing changes. |
 
 ---
 

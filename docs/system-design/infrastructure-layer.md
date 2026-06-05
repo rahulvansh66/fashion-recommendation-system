@@ -27,9 +27,9 @@ Build a production-grade, scalable ML recommendation system on the H&M dataset. 
 
 | Table | Full Scale | Dev Sample | Contents |
 |-------|-----------|------------|----------|
-| `articles.csv` | 105K records | 5K items | Product catalog, hierarchical classification |
-| `customers.csv` | 1.37M records | 10K users | Demographics, preferences |
-| `transactions_train.csv` | 31.8M records | 100K interactions | Purchase history |
+| `articles.csv` | 105K records | Derived from sampled users' transactions | Product catalog, hierarchical classification |
+| `customers.csv` | 1.37M records | ~1K users (stratified sample) | Demographics, preferences |
+| `transactions_train.csv` | 31.8M records | All interactions for sampled users | Purchase history |
 
 ### Schema Pattern
 
