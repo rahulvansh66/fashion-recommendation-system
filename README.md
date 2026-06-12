@@ -32,14 +32,14 @@ From the repo root:
 
 ```bash
 # 1. Script / app environment
-python3 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 deactivate
 
 # 2. Notebook environment + Jupyter kernel
-python3 -m venv .venv-notebooks
+python -m venv .venv-notebooks
 source .venv-notebooks/bin/activate
 pip install --upgrade pip
 pip install -r requirements-notebooks.txt

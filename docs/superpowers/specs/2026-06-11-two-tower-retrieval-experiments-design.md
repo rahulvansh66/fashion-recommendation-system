@@ -8,7 +8,8 @@ related_docs:
   - docs/system-design/v1/v1-requirements.md
   - docs/system-design/v1/v1-hld.md
   - docs/system-design/project-structure.md
-  - docs/implementation-info/guides/two-tower-retrieval-training-guide.md
+  - docs/implementation-info/two-tower-model/two-tower-retrieval-training-guide.md
+  - docs/implementation-info/two-tower-model/two-tower-retrieval-implementation-guide.md
   - docs/implementation-info/guides/mlflow-optuna-experiment-guide.md
 ---
 
@@ -20,7 +21,7 @@ Implement Stage-1 **two-tower retrieval** training with **AWS Managed MLflow** e
 
 **Data:** `s3://{S3_BUCKET}/dataset/sample_2000_users/features/transactions/` (local mirror: `s3/dataset/sample_2000_users/features/transactions/`).
 
-**Reference implementation:** Architecture, default hyperparameters, in-batch negative strategy, and evaluation approach from [`two-tower-retrieval-training-guide.md`](../../implementation-info/guides/two-tower-retrieval-training-guide.md), with **log-q popularity correction** from `tmp/recsys-v2/two-tower-cg/` to debias in-batch negatives.
+**Reference implementation:** Architecture, default hyperparameters, in-batch negative strategy, and evaluation approach from [`two-tower-retrieval-training-guide.md`](../../implementation-info/two-tower-model/two-tower-retrieval-training-guide.md), with **log-q popularity correction** from `tmp/recsys-v2/two-tower-cg/` to debias in-batch negatives.
 
 **Out of scope for this deliverable:** Feature-engineering changes (user extends FE separately), SageMaker weekly production pipeline (FR-BATCH-04), model registry promotion, FAISS index build.
 
@@ -69,7 +70,7 @@ flowchart TB
 | Artifact | Location |
 |----------|----------|
 | Experiment notebook | `notebooks/two_tower_retrieval_experiments.ipynb` |
-| Notebook helpers | `notebooks/two_tower_training_helpers.py` |
+| Notebook helpers | `notebooks/utils/two_tower_training_helpers.py` |
 | Training entrypoint | `pipelines/training/two_tower/train.py` |
 | HPO orchestrator | `pipelines/hpo/run_two_tower_study.py`, `pipelines/sagemaker/hpo_processing_job.py` |
 | Search space | `configs/hpo/two_tower_search_space.yaml` |
@@ -142,7 +143,7 @@ Built from **train split only**:
 
 ### Two-tower architecture
 
-Matches [`two-tower-retrieval-training-guide.md`](../../implementation-info/guides/two-tower-retrieval-training-guide.md) with updated column names:
+Matches [`two-tower-retrieval-training-guide.md`](../../implementation-info/two-tower-model/two-tower-retrieval-training-guide.md) with updated column names:
 
 **Query tower inputs:** `customer_id`, `age`, `txn_month_sin`, `txn_month_cos`  
 → concat (19-d) → `Dense(16, relu)` → `Dense(16)` → 16-d query embedding
@@ -337,7 +338,7 @@ Organized with markdown **sections and subsections** before every code block. Fu
 ### 7.2 Export best params → configs/models/two_tower.yaml
 ```
 
-Helper module: `notebooks/two_tower_training_helpers.py` (split logic, job launch wrappers, schema validation).
+Helper module: `notebooks/utils/two_tower_training_helpers.py` (split logic, job launch wrappers, schema validation).
 
 ---
 
@@ -373,7 +374,8 @@ After HPO: freeze `study.best_params` to YAML → future SageMaker weekly pipeli
 
 | Resource | Location |
 |----------|----------|
-| Training guide | `docs/implementation-info/guides/two-tower-retrieval-training-guide.md` |
+| Training guide | `docs/implementation-info/two-tower-model/two-tower-retrieval-training-guide.md` |
+| Implementation guide | `docs/implementation-info/two-tower-model/two-tower-retrieval-implementation-guide.md` |
 | MLflow + Optuna guide | `docs/implementation-info/guides/mlflow-optuna-experiment-guide.md` |
 | Temporal split contract | `docs/system-design/v1/v1-requirements.md` FR-BATCH-02 |
 | Reference two-tower code | `tmp/recsys/training/two_tower.py` |

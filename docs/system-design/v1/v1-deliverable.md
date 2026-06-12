@@ -1,5 +1,7 @@
 Here's the complete v1 deliverable, organized by layer. After v1 ships, you'll have everything below — and *only* the items in Section 9 + Section 10 will remain unbuilt.
 
+**ML objective (v1):** serve a personalized **top-10** list of articles each customer is **likely to purchase soon**. Offline, **“soon”** is defined by purchases in future label windows (train / val / test splits in [`v1-requirements.md`](./v1-requirements.md) FR-BATCH-02); online, the ranker scores purchase likelihood as of a feature-cutoff date.
+
 ## 1. Unified Application Layer (Frontend + Backend on ECS Fargate)
 
 | Item | Detail |
@@ -42,11 +44,11 @@ Here's the complete v1 deliverable, organized by layer. After v1 ships, you'll h
 
 | Item | Detail |
 |---|---|
-| SageMaker endpoint — Two-Tower user-tower | `ml.t3.medium`, 256-dim embedding output |
-| SageMaker endpoint — CatBoost ranker | `ml.t3.medium`, batch-scored candidates |
+| SageMaker endpoint — Two-Tower user-tower | `ml.t3.medium`, 256-dim embedding output; retrieves top-100 candidates |
+| SageMaker endpoint — CatBoost ranker | `ml.t3.medium`, batch-scored `P(buy soon)` per (customer, candidate) pair; sorted to top-10 after filter + diversity reorder |
 | FAISS Lambda | 2 GB memory, S3-backed `.index` file, top-100 retrieval |
 | Production-variant scaffolding | Canary / A/B configurable on both endpoints |
-| Model Monitor | Data-quality and model-drift baseline configured |
+| Model Monitor | Data-quality and model-drift baseline configured; offline drift reference slices Jul–Sep 2020 (monitoring only) |
 
 ## 5. Data layer (the data lake + cache)
 
@@ -64,7 +66,9 @@ Here's the complete v1 deliverable, organized by layer. After v1 ships, you'll h
 | EventBridge cron | Triggers Step Functions on schedule (data + features weekly; cache warm-up daily 03:00 UTC; cache pre-warm daily 05:00 UTC) |
 | Step Functions — data + feature pipeline | Orchestrates Glue jobs end-to-end |
 | AWS Glue (PySpark) | Clean, feature-engineer (users, items, interactions), build popular-items keys, populate Redis, write `active:users:top6` list with `{customer_id, age, prewarmed}` entries (drives both user-picker cards and pre-warm; `current_date` is added by the frontend at render time) |
-| SageMaker Pipelines — ML pipeline | Two-Tower training → CatBoost training → FAISS index build → Model Registry registration |
+| SageMaker Pipelines — ML pipeline | Build ranking tables (1:5 window-aware negatives) → Two-Tower training → CatBoost training → eval on val/test → FAISS index build → Model Registry registration |
+| Temporal splits (offline) | **Train** `t_dat <= 2020-03-31` · **Val** `2020-04-01`–`2020-05-15` · **Test** `2020-05-16`–`2020-06-30` · **Drift** Jul–Sep 2020 (monitor only) |
+| Pipeline promotion gate (test) | `recall@100 > baseline` **and** ranker `AUC-PR > baseline` **and** `hit_rate@10 > baseline` |
 | SageMaker Training Jobs | On `ml.m5.large` spot (weekly) |
 | SageMaker Model Registry | Approval-gated promotion |
 | **Cache pre-warming work queue** | Daily 05:00 UTC: producer Lambda reads top-3 of `active:users:top6`, stamps each message with `run_date = today (UTC)` plus `age`, and sends to SQS Standard queue → consumer Lambda runs the full 5-stage pipeline with `(customer_id, age, current_date=run_date)` → writes `reco:{cid}` to Redis with 12 h TTL. Idempotent via `prewarm:done:{cid}:{run_date}` SETNX. DLQ + alarm on failure. Reserved concurrency = 5. |
@@ -116,6 +120,7 @@ Here's the complete v1 deliverable, organized by layer. After v1 ships, you'll h
 | `v1-hld.md` | Complete high-level design |
 | `v1-requirements.md` | Functional and non-functional requirements |
 | `v1-deliverable.md` | This document |
+| `ranking-model-training-guide.md`, `two-tower-model/two-tower-retrieval-training-guide.md`, `features-eng.md` | ML training, features, and eval contract |
 | `project-description.md`, `infrastructure-layer.md`, `schema-info.md`, `project-structure.md` | Pre-existing context |
 | Implementation plan | (next step from v1 design — to be written) |
 | Cost-tracking notes | Actual vs. estimated for retrospective |
@@ -138,7 +143,7 @@ When v1 ships you'll be able to:
 3. **Demonstrate production-grade server-rendered architecture:** unified FastAPI monolith on ECS Fargate (no cold starts), API Gateway HTTP API + VPC Link + Cloud Map (no ALB), modern UX with HTMX (no SPA complexity), all deployed via Terraform.
 4. Run `terraform apply` to spin up the full stack (Fargate + SageMaker endpoints) for ~$45–50/mo of active use (6h/day weekdays), and `terraform destroy` for the same modules between sessions to drop to minimal idle cost.
 5. Push a code change to GitHub → CI runs lint/test/build/IaC plan → manual approve → CD deploys Fargate service / ML pipeline as needed → canary deployment for ML model changes → auto-rollback on alarm.
-6. Trigger weekly retraining via EventBridge → Step Functions → Glue → SageMaker Pipelines → Model Registry → manual approval → canary deploy.
-7. Walk an interviewer through every diagram in `v1-hld.md` and point at the live AWS resource backing each box. Explain the architectural tradeoffs: **why FastAPI monolith over Lambda microservices, why HTMX over React SPA, why HTTP API + Cloud Map over ALB.**
+6. Trigger weekly retraining via EventBridge → Step Functions → Glue → SageMaker Pipelines (temporal train/val/test splits, 1:5 window-aware ranker negatives) → eval gate (`recall@100`, `AUC-PR`, `hit_rate@10`) → Model Registry → manual approval → canary deploy.
+7. Walk an interviewer through every diagram in `v1-hld.md` and point at the live AWS resource backing each box. Explain the architectural tradeoffs: **why FastAPI monolith over Lambda microservices, why HTMX over React SPA, why HTTP API + Cloud Map over ALB** — and how offline **“buy soon”** label windows map to the live top-10 serving path.
 
 That is the complete v1 deliverable.

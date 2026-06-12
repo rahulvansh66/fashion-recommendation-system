@@ -98,7 +98,7 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 From the repo root (see [`README.md`](../../../README.md) for full steps):
 
 ```bash
-python3 -m venv .venv-notebooks
+python -m venv .venv-notebooks
 source .venv-notebooks/bin/activate
 pip install --upgrade pip
 pip install -r requirements-notebooks.txt
@@ -165,6 +165,41 @@ Select kernel **Fashion Reco (notebooks)** in your IDE.
 - Paths with spaces — keep the repo out of `Program Files`; a path like `C:\Users\you\Projects\fashion-recommendation-system` is fine.
 - **Long paths** — if CSV writes fail, enable long path support in Windows or keep output under a short path.
 - Same Hadoop native-library warning as Mac — safe to ignore locally.
+- **Parquet writes require `HADOOP_HOME` on Windows** — Spark calls `winutils.exe` when creating output directories. Without it you get `HADOOP_HOME and hadoop.home.dir are unset` (see §5.4).
+
+### 5.4 Windows Hadoop / winutils (required for Parquet writes)
+
+Local **CSV reads** often work without Hadoop native tools, but **writing Parquet** (as in `stratified_user_sampling.ipynb`) fails on Windows unless `HADOOP_HOME` points at a folder containing `bin/winutils.exe`.
+
+**Option A — repo-local shim (recommended for this project)**
+
+From the repo root in PowerShell:
+
+```powershell
+$base = ".hadoop-win/bin"
+New-Item -ItemType Directory -Force -Path $base | Out-Null
+$ver = "hadoop-3.3.5"   # matches PySpark 3.4.x bundled Hadoop
+$root = "https://github.com/cdarlint/winutils/raw/master/$ver/bin"
+Invoke-WebRequest -Uri "$root/winutils.exe" -OutFile "$base/winutils.exe" -UseBasicParsing
+Invoke-WebRequest -Uri "$root/hadoop.dll" -OutFile "$base\hadoop.dll" -UseBasicParsing
+```
+
+The sampling notebook auto-detects `<repo>/.hadoop-win`, adds `bin` to `PATH`, sets `HADOOP_HOME`, and disables Hadoop native IO (`io.native.lib.available=false`) before starting Spark. `.hadoop-win/` is gitignored (machine-local binary).
+
+After installing winutils, **restart the notebook kernel** and re-run from the Spark Session cell so the JVM picks up the new env.
+
+**Option B — system-wide `HADOOP_HOME`**
+
+1. Create e.g. `C:\hadoop\bin\` and place `winutils.exe` + `hadoop.dll` there (same download URLs as above).
+2. Set system env var `HADOOP_HOME=C:\hadoop` and restart the terminal / IDE.
+
+Verify before running the notebook:
+
+```powershell
+Test-Path "$env:HADOOP_HOME\bin\winutils.exe"
+# or, for repo-local shim:
+Test-Path ".hadoop-win\bin\winutils.exe"
+```
 
 ---
 
@@ -262,6 +297,18 @@ Increase driver memory when building the session:
 ```
 
 Close other apps; the full transactions file is ~3.5 GB on disk.
+
+### `HADOOP_HOME and hadoop.home.dir are unset` (Windows Parquet write)
+
+**Cause:** Spark’s Hadoop layer needs `winutils.exe` to create local output dirs when calling `df.write.parquet(...)`.
+
+**Fix:** Follow [§5.4 Windows Hadoop / winutils](#54-windows-hadoop--winutils-required-for-parquet-writes), then **restart the kernel** and re-run from the Spark Session cell (Hadoop env applies at JVM startup).
+
+### `UnsatisfiedLinkError: NativeIO$Windows.access0` (Windows Parquet write)
+
+**Cause:** `hadoop.dll` from winutils does not match the JVM/Hadoop version bundled with PySpark.
+
+**Fix:** The sampling notebook sets `spark.hadoop.io.native.lib.available=false` (pure-Java filesystem checks). Restart the kernel and re-run the Spark Session cell. Do not reuse a Spark session created before that config was added.
 
 ### Slow first run
 

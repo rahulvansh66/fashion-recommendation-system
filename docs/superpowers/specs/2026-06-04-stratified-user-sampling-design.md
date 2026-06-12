@@ -34,13 +34,29 @@ Create a PySpark notebook at `notebooks/stratified_user_sampling.ipynb` that bui
 
 ---
 
+## Global Temporal Split
+
+All offline pipelines (sampling, feature engineering, ranker training) share one global cutoff:
+
+| Role | Rule | Example (`cutoff = 2020-03-31`) |
+|------|------|----------------------------------|
+| **Features** | `t_dat <= cutoff` | History through 2020-03-31 |
+| **Model labels** | `t_dat > cutoff` within a 7-day window | Purchases in `(2020-03-31, 2020-04-07]` — prediction horizon starts **2020-04-01** |
+| **Stratification labels** | `t_dat <= cutoff` only (same as features) | Tier/recency from pre-cutoff history |
+
+Post-cutoff transactions are retained in sampled output so ranker training can build labels, but they are **never** used for feature computation or stratification.
+
+---
+
 ## Segment Definitions
 
-All labels are computed using transaction history **as of cutoff date** only. Post-cutoff transactions are **never** used for labeling (but are retained in output — see Output Filtering).
+Stratification tier and recency labels use transaction history **as of cutoff date** only (`t_dat <= cutoff`). Model training labels come from the post-cutoff window above.
 
 | Parameter | Value |
 |-----------|-------|
 | Cutoff date | `2020-03-31` |
+| Label window | 7 days |
+| Label window range | `(cutoff, cutoff + 7 days]` → `(2020-03-31, 2020-04-07]` (first label day: `2020-04-01`) |
 | Recency window | 30 days |
 | Recency window range | `(cutoff - 30 days, cutoff]` → `(2020-03-02, 2020-03-31]` |
 
@@ -174,6 +190,7 @@ CONFIG = {
     "input_path":   os.getenv("SAMPLING_INPUT_PATH",   "../dataset/full"),
     "output_path":  os.getenv("SAMPLING_OUTPUT_PATH",  "../dataset/sample"),
     "cutoff_date":  os.getenv("SAMPLING_CUTOFF_DATE",  "2020-03-31"),
+    "label_window_days": int(os.getenv("SAMPLING_LABEL_WINDOW_DAYS", "7")),
     "recency_days": int(os.getenv("SAMPLING_RECENCY_DAYS", "30")),
     "target_n":     int(os.getenv("SAMPLING_TARGET_N",     "1000")),
     "random_seed":  int(os.getenv("SAMPLING_RANDOM_SEED",  "42")),
@@ -251,6 +268,7 @@ Manual verification via notebook validation cell (no unit tests in v1 notebook s
 | Sampling strategy | Proportional, not uniform | Preserve real-world segment distribution |
 | Primary / secondary axis | Purchase tier → recency | User requirement |
 | New user recency | N/A (single cell) | No pre-cutoff history to classify |
-| Transaction scope in output | All dates for sampled users | Supports future training/eval with post-cutoff labels |
+| Transaction scope in output | All dates for sampled users | Supports ranker label window after cutoff (2020-04-01 → 7 days) |
+| Global temporal split | Features `t_dat <= cutoff`; labels `t_dat > cutoff` | Aligns sampling, feature engineering, and ranker training |
 | Runtime | Pure PySpark, no Pandas | Glue portability per v1-hld §18.2 |
 | Reproducibility | `rand(seed)` + `customer_id` tie-break | Deterministic across re-runs |

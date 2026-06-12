@@ -1,0 +1,45 @@
+# Expected column types — mirrors docs/system-design/schema-info.md
+# Used by validation; Spark casts are applied explicitly (no inferSchema).
+
+articles:
+  article_id: string
+  product_code: string
+  prod_name: string
+  product_type_no: int
+  product_type_name: string
+  product_group_name: string
+  graphical_appearance_no: int
+  graphical_appearance_name: string
+  colour_group_code: string
+  colour_group_name: string
+  perceived_colour_value_id: int
+  perceived_colour_value_name: string
+  perceived_colour_master_id: int
+  perceived_colour_master_name: string
+  department_no: int
+  department_name: string
+  index_code: string
+  index_name: string
+  index_group_no: int
+  index_group_name: string
+  section_no: int
+  section_name: string
+  garment_group_no: int
+  garment_group_name: string
+  detail_desc: string
+
+customers:
+  customer_id: string
+  FN: string
+  Active: string
+  club_member_status: string
+  fashion_news_frequency: string
+  age: int
+  postal_code: string
+
+transactions:
+  t_dat: date
+  customer_id: string
+  article_id: string
+  price: double
+  sales_channel_id: int

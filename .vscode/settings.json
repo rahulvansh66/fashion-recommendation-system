@@ -1,4 +1,4 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv-notebooks/bin/python",
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv-notebooks/Scripts/python.exe",
   "python.terminal.activateEnvironment": true
 }

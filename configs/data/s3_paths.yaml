@@ -1,0 +1,34 @@
+# S3 prefix layout and dataset selection.
+# Infrastructure endpoints (bucket name, LocalStack) live in config.py — not here.
+
+datasets:
+  # Datasets staged from dataset/ → s3 mirror or S3 bucket
+  stage:
+    - dummy
+    - sample_2000_users
+  # Active dataset for feature engineering (change to "dummy" for smoke tests)
+  active: sample_2000_users
+
+environments:
+  local_dev:
+    storage_mode: local
+    local_dataset_root: "../dataset"
+    local_s3_root: "../s3"
+    prefixes:
+      staged: "dataset/{dataset_name}"
+      splits: "dataset/{dataset_name}/splits"
+      features: "dataset/{dataset_name}/features"
+
+  aws:
+    storage_mode: aws
+    # Default bucket; production overrides via S3_BUCKET env in config.py
+    s3_bucket: fashion-reco-dev
+    prefixes:
+      # v1 HLD production layout (Glue jobs)
+      raw: "raw/"
+      clean: "clean/"
+      features: "features/"
+      # Dev-sample layout (notebook / local mirror parity)
+      staged: "dataset/{dataset_name}"
+      splits: "dataset/{dataset_name}/splits"
+      features_dev: "dataset/{dataset_name}/features"

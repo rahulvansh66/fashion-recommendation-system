@@ -38,3 +38,14 @@ Implementation must be traceable to **v1-requirements** and align with **v1-hld*
 - Keep online path lightweight: precomputed features + SageMaker + FAISS Lambda; no heavy FE or LLM on the request path (v1 out of scope: RAG, event streaming, Cognito—see v1-hld §1.2).
 - `os.getenv()` only in `config.py`; model/feature params in `configs/` YAML.
 - Do not import from `src/` in notebooks; do not commit model artifacts or full dataset to git.
+
+
+## Coding best practice
+
+- Jupyter notebook should be orgainized with section and subsections, use markdown before each block to give description of what next code block does
+- Always add comments in code so that it'll be easy to understand when someone read the code
+- Add docstring in functions, which includes purpose of functions, arguments and return variable description
+
+## Notes
+
+- When anything asked to you, answer should be concise except it's explicitly mentioned in prompt to give detailed explaination. 

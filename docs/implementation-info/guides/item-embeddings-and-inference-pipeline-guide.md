@@ -4,7 +4,7 @@
 **Purpose:** Document how item embeddings are precomputed offline and how the end-to-end inference pipeline (user embedding → ANN retrieval → ranking) works at serving time.
 
 This guide is a companion to:
-- [`two-tower-retrieval-training-guide.md`](two-tower-retrieval-training-guide.md) — training the two towers
+- [`two-tower-retrieval-training-guide.md`](../two-tower-model/two-tower-retrieval-training-guide.md) — training the two towers
 - [`ranking-model-training-guide.md`](ranking-model-training-guide.md) — training the CatBoost ranker
 
 ---
@@ -306,5 +306,5 @@ A GPT-4o-mini based ranker (`llm_ranking_predictor.py`) is available as an alter
 | LLM ranker (optional) | `tmp/recsys/inference/llm_ranking_predictor.py` |
 | Deployment notebook | `tmp/notebooks/5_ip_creating_deployments.ipynb` |
 | Streamlit UI | `tmp/recsys/ui/recommenders.py` |
-| Retrieval training guide | `two-tower-retrieval-training-guide.md` |
+| Retrieval training guide | `docs/implementation-info/two-tower-model/two-tower-retrieval-training-guide.md` |
 | Ranking training guide | `ranking-model-training-guide.md` |

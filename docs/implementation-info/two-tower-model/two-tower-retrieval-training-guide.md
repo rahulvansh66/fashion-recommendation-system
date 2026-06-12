@@ -1,21 +1,16 @@
 # Two-Tower Retrieval Model — Training Guide
 
 **Source:** `tmp/notebooks/2_tp_training_retrieval_model.ipynb` and `tmp/recsys/`  
-**Purpose:** Document how the Stage-1 retrieval model is trained — input features, preprocessing, sampling, architecture, hyperparameters, and evaluation.
+**Implementation (this repo):** [`two-tower-retrieval-implementation-guide.md`](./two-tower-retrieval-implementation-guide.md) — code layout, pipelines, SageMaker, MLflow/Optuna, runbook  
+**Purpose:** Document how the Stage-1 retrieval model is trained — input features, preprocessing, sampling, architecture, hyperparameters, and evaluation. 
 
-The retrieval model narrows the full H&M catalog (~105k articles) to a small candidate set (~100 items) using a **two-tower architecture**. Each tower embeds its side of a user–item interaction into a shared low-dimensional vector space. At inference, nearest-neighbor search over item embeddings finds candidates whose vectors are closest to the query (user) embedding.
+The retrieval model narrows the full H&M catalog (~~105k articles) to a small candidate set (~~100 items) using a **two-tower architecture**. Each tower embeds its side of a user–item interaction into a shared low-dimensional vector space. At inference, nearest-neighbor search over item embeddings finds candidates whose vectors are closest to the query (user) embedding.
 
 ---
 
 ## 1. Input Features
 
-Training data comes from the Hopsworks **retrieval feature view**, which joins three feature groups on each purchase row in `transactions`:
-
-| Feature group | Join key | Role |
-|---|---|---|
-| `transactions` | — (driving table) | One row per purchase |
-| `customers` | `customer_id` | User-side attributes |
-| `articles` | `article_id` | Item-side attributes |
+Training data comes from each purchase row in `transactions`:
 
 Each training row represents one real purchase: customer `C` bought article `A` at time `T`. There is no explicit `label` column — the row itself is the positive signal.
 
@@ -25,133 +20,50 @@ Only a subset of columns from the joined feature view are passed into the two to
 
 **Query tower (user + context)**
 
-| Feature | Type | Description |
-|---|---|---|
-| `customer_id` | string (ID) | Unique customer identifier |
-| `age` | float | Customer age at time of purchase |
-| `month_sin` | float | Sine encoding of purchase month (seasonality) |
-| `month_cos` | float | Cosine encoding of purchase month (seasonality) |
+
+| Feature       | Type        | Description                                     |
+| ------------- | ----------- | ----------------------------------------------- |
+| `customer_id` | string (ID) | Unique customer identifier                      |
+| `age`         | float       | Customer age at time of purchase                |
+| `month_sin`   | float       | Sine encoding of purchase month (seasonality)   |
+| `month_cos`   | float       | Cosine encoding of purchase month (seasonality) |
+
 
 **Candidate tower (item)**
 
-| Feature | Type | Description |
-|---|---|---|
-| `article_id` | string (ID) | Unique article identifier |
-| `garment_group_name` | categorical | Garment type (e.g. Trousers, Blouses, Dresses Ladies) |
-| `index_group_name` | categorical | Top-level category (e.g. Ladieswear, Menswear, Divided) |
 
-### 1.2 Features in the feature view but not used for retrieval training
+| Feature              | Type        | Description                                             |
+| -------------------- | ----------- | ------------------------------------------------------- |
+| `article_id`         | string (ID) | Unique article identifier                               |
+| `garment_group_name` | categorical | Garment type (e.g. Trousers, Blouses, Dresses Ladies)   |
+| `index_group_name`   | categorical | Top-level category (e.g. Ladieswear, Menswear, Divided) |
 
-These columns are materialized in the joined dataset but excluded from the model input:
 
-| Feature | Reason not used |
-|---|---|
-| `t_dat` | Drives `month_sin` / `month_cos`; raw timestamp not fed to towers |
-| `price` | Not selected for retrieval model (used elsewhere) |
-| `club_member_status` | Available after join; not in query tower |
-| `age_group` | Bucketed age; model uses continuous `age` instead |
-
-Article-level features such as `article_description`, `embeddings` (SentenceTransformer), and `prod_name_length` are engineered in the feature pipeline but are **not** used by the retrieval model. They support the ranking stage and other downstream tasks.
-
----
-
-## 2. Engineered Features
-
-Features below are created in the offline feature pipeline (`1_fp_computing_features.ipynb`, `recsys/features/`) before retrieval training. Only those marked **Used in retrieval** are consumed by the two-tower model.
-
-### 2.1 Transaction features (`recsys/features/transactions.py`)
-
-| Feature | Used in retrieval | Description |
-|---|---|---|
-| `month_sin` | Yes | `sin(month x 2pi / 12)`. Cyclical encoding so December and January are close in feature space. Applied as an on-demand Hopsworks transformation on `t_dat`. |
-| `month_cos` | Yes | `cos(month x 2pi / 12)`. Paired with `month_sin` to preserve seasonal continuity without treating month as an ordinal integer. |
-| `year` | No | Calendar year extracted from `t_dat`. |
-| `month` | No | Calendar month (1–12) extracted from `t_dat`; encoded cyclically via sin/cos for the model. |
-| `day` | No | Day of month extracted from `t_dat`. |
-| `day_of_week` | No | Weekday index extracted from `t_dat`. |
-| `t_dat` (epoch ms) | No | Transaction timestamp converted to epoch milliseconds for feature-store event time. |
-
-### 2.2 Customer features (`recsys/features/customers.py`)
-
-| Feature | Used in retrieval | Description |
-|---|---|---|
-| `age` | Yes | Customer age cast to `Float64`. Rows with null age are dropped during feature engineering. |
-| `age_group` | No | Categorical bucket derived from `age`: `0-18`, `19-25`, `26-35`, `36-45`, `46-55`, `56-65`, `66+`. |
-| `club_member_status` | No | Membership status; missing values filled with `ABSENT`. |
-| `postal_code` | No | Customer postal code; retained in feature group but not used by retrieval. |
-
-### 2.3 Article features (`recsys/features/articles.py`)
-
-| Feature | Used in retrieval | Description |
-|---|---|---|
-| `garment_group_name` | Yes | Fine-grained garment category from the H&M catalog hierarchy. |
-| `index_group_name` | Yes | Top-level index group (e.g. Ladieswear, Menswear). |
-| `article_description` | No | Rich text built from `prod_name`, product type/group, appearance, color, category fields, and optional `detail_desc`. |
-| `embeddings` | No | 384-dim SentenceTransformer vector (`all-MiniLM-L6-v2`) of `article_description`. Used by ranking / search, not retrieval towers. |
-| `prod_name_length` | No | Character length of `prod_name`. |
-| `image_url` | No | Constructed product image URL from `article_id`. |
-
-### 2.4 Dataset sampling (`recsys/features/customers.py`)
-
-| Setting | Description |
-|---|---|
-| `DatasetSampler` | Reduces training volume by randomly sampling customers before join. |
-| `SMALL` (default) | 1,000 customers → ~16k training rows in the reference run. |
-| `MEDIUM` | 5,000 customers. |
-| `LARGE` | 50,000 customers. |
-
-Transactions are filtered to only those belonging to sampled customers. Random seed is fixed at `27` for reproducibility.
-
----
-
-## 3. Preprocessing
-
-Preprocessing happens at two stages: **offline feature engineering** (before the feature store) and **in-model preprocessing** (during training).
-
-### 3.1 Offline preprocessing (feature pipeline)
-
-**Transactions**
-
-- Cast `article_id` to string.
-- Parse `t_dat` as datetime; extract `year`, `month`, `day`, `day_of_week`.
-- Convert `t_dat` to epoch milliseconds for Hopsworks event time.
-- Register `month_sin` and `month_cos` as on-demand transformation functions on the transactions feature group.
-
-**Customers**
-
-- Fill null `club_member_status` with `ABSENT`.
-- Drop rows with null `age`.
-- Derive `age_group` buckets.
-- Cast `age` to `Float64`.
-
-**Articles**
-
-- Cast `article_id` to string.
-- Build `article_description`, `prod_name_length`, `image_url`.
-- Generate SentenceTransformer embeddings (not used by retrieval).
-- Drop columns that are entirely null; remove `detail_desc` after it is consumed into the description text.
-
-### 3.2 In-model preprocessing (training time)
+### 2 In-model preprocessing (training time)
 
 Applied inside `QueryTower` and `ItemTower` (`recsys/training/two_tower.py`):
 
 **Query tower**
 
-| Input | Preprocessing |
-|---|---|
-| `customer_id` | `StringLookup` vocabulary built from unique training customer IDs (+1 slot for unknown tokens) → `Embedding(emb_dim=16)` |
-| `age` | `Normalization` layer adapted on the training set (zero mean, unit variance) |
-| `month_sin`, `month_cos` | Passed through as-is (already scaled to [-1, 1]) |
+
+| Input                    | Preprocessing                                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `customer_id`            | `StringLookup` vocabulary built from unique training customer IDs (+1 slot for unknown tokens) → `Embedding(emb_dim=16)` |
+| `age`                    | `Normalization` layer adapted on the training set (zero mean, unit variance)                                             |
+| `month_sin`, `month_cos` | Passed through as-is (already scaled to [-1, 1])                                                                         |
+
 
 Concatenated vector → `Dense(16, relu)` → `Dense(16)` → query embedding.
 
 **Candidate tower**
 
-| Input | Preprocessing |
-|---|---|
-| `article_id` | `StringLookup` vocabulary from unique training article IDs (+1 unknown slot) → `Embedding(emb_dim=16)` |
-| `garment_group_name` | `StringLookup` → `tf.one_hot` over garment-group vocabulary |
-| `index_group_name` | `StringLookup` → `tf.one_hot` over index-group vocabulary |
+
+| Input                | Preprocessing                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| `article_id`         | `StringLookup` vocabulary from unique training article IDs (+1 unknown slot) → `Embedding(emb_dim=16)` |
+| `garment_group_name` | `StringLookup` → `tf.one_hot` over garment-group vocabulary                                            |
+| `index_group_name`   | `StringLookup` → `tf.one_hot` over index-group vocabulary                                              |
+
 
 Concatenated vector → `Dense(16, relu)` → `Dense(16)` → item embedding.
 
@@ -164,11 +76,11 @@ Concatenated vector → `Dense(16, relu)` → `Dense(16)` → item embedding.
 
 ---
 
-## 4. Positive and Negative Sample Strategy
+## 3. Positive and Negative Sample Strategy
 
 The retrieval model uses **implicit feedback** from purchase history. There is no separate negative dataset.
 
-### 4.1 Positive samples
+### 3.1 Positive samples
 
 - **Source:** Every row in the joined `transactions` feature view.
 - **Definition:** Each row is a `(customer_id, article_id)` pair that represents a confirmed purchase.
@@ -181,7 +93,7 @@ customer_id="C42", age=34, month_sin=-0.5, month_cos=-0.866,
 article_id="A17", garment_group_name="Knitwear", index_group_name="Ladieswear"
 ```
 
-### 4.2 Negative samples — in-batch contrastive learning
+### 3.2 Negative samples — in-batch contrastive learning
 
 Negatives are **not precomputed**. The TensorFlow Recommenders `Retrieval` task generates them implicitly:
 
@@ -191,25 +103,13 @@ Negatives are **not precomputed**. The TensorFlow Recommenders `Retrieval` task 
 
 This contrastive setup avoids building an explicit negative table while still teaching the model what a customer did *not* buy in the context of co-occurring batch items.
 
-### 4.3 Train / validation / test split
-
-Split is performed by Hopsworks on the retrieval feature view:
-
-| Split | Fraction | Purpose |
-|---|---|---|
-| Train | 90% | Model training + vocabulary construction |
-| Validation | 10% | Held-out evaluation during `fit()` |
-| Test | 10% | Reserved by feature view (not used in notebook 2) |
-
-Reference run (SMALL dataset): **16,300** training samples, **2,037** validation samples, **966** unique users, **11,820** unique items.
-
 ---
 
-## 5. Model Architecture
+## 4. Model Architecture
 
 The model is a **two-tower (dual-encoder) retrieval** system built with TensorFlow + TensorFlow Recommenders (`tfrs`). The two towers are trained jointly to project users and items into the same 16-dimensional vector space, where proximity means purchase likelihood.
 
-### 5.1 Full architecture diagram
+### 4.1 Full architecture diagram
 
 ```
  Training batch (B rows)
@@ -254,7 +154,7 @@ tf.concat [19-d]     tf.concat [~48-d]
 
 ---
 
-### 5.2 Query tower — every component explained
+### 4.2 Query tower — every component explained
 
 The query tower produces a 16-d vector that answers: *"what kind of articles does this customer want, in this month?"*
 
@@ -320,6 +220,7 @@ Stacks the four vectors along axis 1:
 **Purpose:** Projects the 19-d concatenated input into 16-d and applies a **non-linearity**. Without this layer the tower would be entirely linear: just a dot product of the embedding and a projection matrix. A linear model cannot capture cross-feature interactions — for example, "a 20-year-old buying in summer" is different from "a 60-year-old buying in summer," and that difference requires non-linear mixing of the age and month features with the user ID embedding.
 
 **Why ReLU specifically:**
+
 - Does not suffer from vanishing gradients for positive activations (gradient is exactly 1 when input > 0).
 - Computationally cheap — just a max(0, x).
 - Produces sparse activations, which reduces co-adaptation between neurons and can act as implicit regularization.
@@ -339,7 +240,7 @@ Stacks the four vectors along axis 1:
 
 ---
 
-### 5.3 Candidate tower — every component explained
+### 4.3 Candidate tower — every component explained
 
 The candidate tower produces a 16-d vector that answers: *"what kind of customer would buy this article?"*
 
@@ -384,13 +285,14 @@ The two-layer MLP projects the ~48-d concatenated item input down to the 16-d sh
 
 ---
 
-### 5.4 Loss function — `tfrs.tasks.Retrieval` (softmax cross-entropy)
+### 4.4 Loss function — `tfrs.tasks.Retrieval` (softmax cross-entropy)
 
 This is the core learning objective.
 
 **What it computes:**
 
 For a batch of `B` purchase rows, the model produces:
+
 - `U` of shape `(B, 16)` — all query embeddings
 - `V` of shape `(B, 16)` — all candidate embeddings
 
@@ -408,11 +310,13 @@ Total loss = mean of `L_i` over all B rows.
 
 **Why softmax cross-entropy and not pairwise (BPR) or margin loss:**
 
-| Alternative | Issue |
-|---|---|
-| Pairwise BPR | Requires explicit (positive, negative) pairs; no precomputed negatives exist here |
-| Hinge / margin | Requires careful margin hyperparameter tuning; harder to optimize at scale |
+
+| Alternative               | Issue                                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Pairwise BPR              | Requires explicit (positive, negative) pairs; no precomputed negatives exist here                                  |
+| Hinge / margin            | Requires careful margin hyperparameter tuning; harder to optimize at scale                                         |
 | Softmax (sampled softmax) | Naturally handles many negatives from the batch; widely proven in retrieval (YouTube DNN, Google two-tower papers) |
+
 
 Softmax treats the problem as "which of the B items did this user buy?" — a B-class classification per row. It is simple, numerically stable, and scales well with batch size.
 
@@ -422,7 +326,7 @@ More items in the batch = more in-batch negatives per user = harder classificati
 
 ---
 
-### 5.5 Regularization — AdamW weight decay
+### 4.5 Regularization — AdamW weight decay
 
 **What it does:** AdamW applies L2 regularization directly in the weight update rule rather than adding a penalty term to the loss. With weight decay `wd = 0.001` and learning rate `lr = 0.01`, each weight is shrunk before the gradient step:
 
@@ -436,9 +340,10 @@ w <- w * (1 - lr * wd) - lr * gradient
 
 ---
 
-### 5.6 Optimizer — AdamW
+### 4.6 Optimizer — AdamW
 
 **What it does:** Maintains per-parameter running estimates of:
+
 - First moment (exponential moving average of gradients) → `m`
 - Second moment (exponential moving average of squared gradients) → `v`
 
@@ -452,7 +357,7 @@ Adam's per-parameter adaptive rates automatically solve this: rare items accumul
 
 ---
 
-### 5.7 Custom `train_step` and `test_step`
+### 4.7 Custom `train_step` and `test_step`
 
 The `TwoTowerModel` overrides Keras's default training step with an explicit `tf.GradientTape`:
 
@@ -476,7 +381,7 @@ self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 ---
 
-### 5.8 Evaluation layer — `tfrs.metrics.FactorizedTopK`
+### 4.8 Evaluation layer — `tfrs.metrics.FactorizedTopK`
 
 **What it does:** During validation, builds a brute-force nearest-neighbor index over the full candidate corpus (all unique training articles passed through the candidate tower once). For each validation query embedding, computes dot products against every item embedding and identifies the top-K highest-scoring items.
 
@@ -488,38 +393,42 @@ The retrieval model is Stage 1 in a two-stage pipeline. The CatBoost ranker (Sta
 
 ---
 
-### 5.9 Summary table — all components and their purpose
+### 4.9 Summary table — all components and their purpose
 
-| Component | Tower | Purpose |
-|---|---|---|
-| `StringLookup` (IDs) | Both | Convert opaque string IDs to integer indices for embedding lookup; handles unknown IDs at inference |
-| `Embedding` (ID) | Both | Trainable dense lookup; learns collaborative signal — similar users/items cluster together |
-| `Normalization` | Query | Z-score scaling of `age` so its magnitude does not dominate embedding values during training |
-| `tf.one_hot` (categoricals) | Candidate | Lossless, parameter-free encoding of small garment/index vocabularies; avoids embedding collapse risk |
-| `tf.concat` | Both | Fuses heterogeneous inputs (collaborative ID signal + content metadata + temporal context) into one vector |
-| `Dense(16, activation="relu")` | Both | Non-linear mixing of concatenated inputs; enables cross-feature interactions that a linear model cannot learn |
-| `Dense(16)` (no activation) | Both | Linear output projection; preserves all directions in the shared embedding space for dot-product comparison |
-| `tfrs.tasks.Retrieval` (softmax CE) | Combined | In-batch contrastive loss: treats true purchase pairs as positives and all other batch items as negatives |
-| AdamW optimizer | Training | Adaptive per-parameter learning rates; handles sparse embedding gradients well |
-| Weight decay `0.001` | AdamW | Keeps embedding norms bounded; prevents softmax saturation and gradient stalling |
-| `FactorizedTopK` | Evaluation | Top-K recall over full item corpus; directly measures Stage-1 pipeline value for the downstream ranker |
+
+| Component                           | Tower      | Purpose                                                                                                       |
+| ----------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------- |
+| `StringLookup` (IDs)                | Both       | Convert opaque string IDs to integer indices for embedding lookup; handles unknown IDs at inference           |
+| `Embedding` (ID)                    | Both       | Trainable dense lookup; learns collaborative signal — similar users/items cluster together                    |
+| `Normalization`                     | Query      | Z-score scaling of `age` so its magnitude does not dominate embedding values during training                  |
+| `tf.one_hot` (categoricals)         | Candidate  | Lossless, parameter-free encoding of small garment/index vocabularies; avoids embedding collapse risk         |
+| `tf.concat`                         | Both       | Fuses heterogeneous inputs (collaborative ID signal + content metadata + temporal context) into one vector    |
+| `Dense(16, activation="relu")`      | Both       | Non-linear mixing of concatenated inputs; enables cross-feature interactions that a linear model cannot learn |
+| `Dense(16)` (no activation)         | Both       | Linear output projection; preserves all directions in the shared embedding space for dot-product comparison   |
+| `tfrs.tasks.Retrieval` (softmax CE) | Combined   | In-batch contrastive loss: treats true purchase pairs as positives and all other batch items as negatives     |
+| AdamW optimizer                     | Training   | Adaptive per-parameter learning rates; handles sparse embedding gradients well                                |
+| Weight decay `0.001`                | AdamW      | Keeps embedding norms bounded; prevents softmax saturation and gradient stalling                              |
+| `FactorizedTopK`                    | Evaluation | Top-K recall over full item corpus; directly measures Stage-1 pipeline value for the downstream ranker        |
+
 
 ---
 
-## 6. Finalized Training Parameters
+## 5. Finalized Training Parameters
 
 All hyperparameters are defined in `recsys/config.py` (`Settings` class):
 
-| Parameter | Value | Description |
-|---|---|---|
-| `TWO_TOWER_MODEL_EMBEDDING_SIZE` | `16` | Output dimension for both towers |
-| `TWO_TOWER_MODEL_BATCH_SIZE` | `2048` | Batch size for training and in-batch negatives |
-| `TWO_TOWER_NUM_EPOCHS` | `10` | Training epochs |
-| `TWO_TOWER_LEARNING_RATE` | `0.01` | AdamW learning rate |
-| `TWO_TOWER_WEIGHT_DECAY` | `0.001` | AdamW L2 weight decay |
-| `TWO_TOWER_DATASET_VALIDATON_SPLIT_SIZE` | `0.1` | Validation fraction |
-| `TWO_TOWER_DATASET_TEST_SPLIT_SIZE` | `0.1` | Test fraction (reserved by feature view) |
-| `CUSTOMER_DATA_SIZE` | `SMALL` (1,000 customers) | Upstream dataset sampling size |
+
+| Parameter                                | Value                     | Description                                    |
+| ---------------------------------------- | ------------------------- | ---------------------------------------------- |
+| `TWO_TOWER_MODEL_EMBEDDING_SIZE`         | `16`                      | Output dimension for both towers               |
+| `TWO_TOWER_MODEL_BATCH_SIZE`             | `2048`                    | Batch size for training and in-batch negatives |
+| `TWO_TOWER_NUM_EPOCHS`                   | `10`                      | Training epochs                                |
+| `TWO_TOWER_LEARNING_RATE`                | `0.01`                    | AdamW learning rate                            |
+| `TWO_TOWER_WEIGHT_DECAY`                 | `0.001`                   | AdamW L2 weight decay                          |
+| `TWO_TOWER_DATASET_VALIDATON_SPLIT_SIZE` | `0.1`                     | Validation fraction                            |
+| `TWO_TOWER_DATASET_TEST_SPLIT_SIZE`      | `0.1`                     | Test fraction (reserved by feature view)       |
+| `CUSTOMER_DATA_SIZE`                     | `SMALL` (1,000 customers) | Upstream dataset sampling size                 |
+
 
 **Optimizer:** `tf.keras.optimizers.AdamW` with the learning rate and weight decay above.
 
@@ -532,30 +441,32 @@ All hyperparameters are defined in `recsys/config.py` (`Settings` class):
 
 ---
 
-## 7. Evaluation Strategy
+## 6. Evaluation Strategy
 
-### 7.1 Primary metric — Top-K categorical accuracy
+### 6.1 Primary metric — Top-K categorical accuracy
 
 Evaluation uses `tfrs.metrics.FactorizedTopK` with the **full candidate corpus** (all unique training articles embedded through the candidate tower):
 
-| Metric | Meaning |
-|---|---|
-| `top_1_categorical_accuracy` | Fraction of validation purchases where the true item ranks #1 |
-| `top_5_categorical_accuracy` | True item in top 5 |
-| `top_10_categorical_accuracy` | True item in top 10 |
-| `top_50_categorical_accuracy` | True item in top 50 |
-| `top_100_categorical_accuracy` | True item in top 100 |
+
+| Metric                         | Meaning                                                       |
+| ------------------------------ | ------------------------------------------------------------- |
+| `top_1_categorical_accuracy`   | Fraction of validation purchases where the true item ranks #1 |
+| `top_5_categorical_accuracy`   | True item in top 5                                            |
+| `top_10_categorical_accuracy`  | True item in top 10                                           |
+| `top_50_categorical_accuracy`  | True item in top 50                                           |
+| `top_100_categorical_accuracy` | True item in top 100                                          |
+
 
 The notebook highlights **top-100 accuracy** as the headline retrieval metric: for each validation purchase, embed the query, retrieve the 100 nearest items, and check whether the actually purchased article appears in that set.
 
-### 7.2 Evaluation procedure
+### 6.2 Evaluation procedure
 
 1. Build candidate index from **deduplicated training articles** (`get_items_subset()`).
 2. For each validation batch, compute query and item embeddings.
 3. `FactorizedTopK` scores every query against the full candidate embedding matrix.
 4. Report top-K hit rates and validation loss (`val_loss`, `val_total_loss`).
 
-### 7.3 Training vs validation monitoring
+### 6.3 Training vs validation monitoring
 
 During `model.fit()`:
 
@@ -565,7 +476,7 @@ During `model.fit()`:
 
 Loss curves (training vs validation) are plotted at the end of the notebook to check for overfitting.
 
-### 7.4 What evaluation does not cover
+### 6.4 What evaluation does not cover
 
 - **Cold-start users/items** not seen in training vocabularies fall back to the `+1` unknown embedding slot; performance on truly new IDs is not separately reported.
 - **Ranking quality** (precision of ordering within top-100) is deferred to the CatBoost ranking model in notebook 3.
@@ -573,53 +484,33 @@ Loss curves (training vs validation) are plotted at the end of the notebook to c
 
 ---
 
-## 8. Training Outputs
+## 7. Training Outputs
 
 After training, two models are registered in the Hopsworks Model Registry:
 
-| Registry name | Component | Purpose |
-|---|---|---|
-| `query_model` | `QueryTower` | Encode `(customer_id, age, month_sin, month_cos)` → 16-d vector at serving time |
-| `candidate_model` | `ItemTower` | Encode `(article_id, garment_group_name, index_group_name)` → 16-d vector |
+
+| Registry name     | Component    | Purpose                                                                         |
+| ----------------- | ------------ | ------------------------------------------------------------------------------- |
+| `query_model`     | `QueryTower` | Encode `(customer_id, age, month_sin, month_cos)` → 16-d vector at serving time |
+| `candidate_model` | `ItemTower`  | Encode `(article_id, garment_group_name, index_group_name)` → 16-d vector       |
+
 
 Notebook 4 precomputes item embeddings from `candidate_model` into the `candidate_embeddings` feature group for ANN retrieval at inference.
 
 ---
 
-## 9. End-to-End Data Flow (Summary)
-
-```text
-Raw CSVs (articles, customers, transactions)
-        |
-        v
-Feature engineering (notebook 1)
-  - temporal encodings, age groups, article descriptions, embeddings
-        |
-        v
-Hopsworks feature groups + retrieval feature view (join on purchase)
-        |
-        v
-TwoTowerDataset: 90/10 train-val split, tf.data pipelines
-        |
-        v
-QueryTower + ItemTower + Retrieval loss (in-batch negatives)
-        |
-        v
-Evaluate: FactorizedTopK top-1 ... top-100 on validation purchases
-        |
-        v
-Register query_model + candidate_model -> Model Registry
-```
-
 ---
 
 ## References
 
-| Resource | Location |
-|---|---|
-| Training notebook | `tmp/notebooks/2_tp_training_retrieval_model.ipynb` |
-| Feature engineering notebook | `tmp/notebooks/1_fp_computing_features.ipynb` |
-| Two-tower implementation | `tmp/recsys/training/two_tower.py` |
-| Retrieval feature view | `tmp/recsys/hopsworks_integration/feature_store.py` |
-| Hyperparameters | `tmp/recsys/config.py` |
+
+| Resource                            | Location                                                             |
+| ----------------------------------- | -------------------------------------------------------------------- |
+| Training notebook                   | `tmp/notebooks/2_tp_training_retrieval_model.ipynb`                  |
+| Feature engineering notebook        | `tmp/notebooks/1_fp_computing_features.ipynb`                        |
+| Two-tower implementation            | `tmp/recsys/training/two_tower.py`                                   |
+| Retrieval feature view              | `tmp/recsys/hopsworks_integration/feature_store.py`                  |
+| Hyperparameters                     | `tmp/recsys/config.py`                                               |
 | Transaction / customer / article FE | `tmp/recsys/features/transactions.py`, `customers.py`, `articles.py` |
+
+

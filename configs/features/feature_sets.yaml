@@ -1,0 +1,13 @@
+# Which feature groups to compute in the offline feature pipeline.
+
+enabled:
+  item: true
+  user: true
+  cross: true
+  transaction_globals: true
+
+outputs:
+  items: items
+  users: users
+  interactions: interactions
+  transaction_globals: transaction_globals

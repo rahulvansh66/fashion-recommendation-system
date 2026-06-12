@@ -1,0 +1,22 @@
+# Source file paths and formats for H&M ingestion.
+# Full dataset: dataset/full/*.csv (see stratified_user_sampling.ipynb)
+# Dev samples: dataset/sample_2000_users/, dataset/dummy/ (Parquet)
+
+sources:
+  articles:
+    format: parquet
+    tables: [articles]
+  customers:
+    format: parquet
+    tables: [customers]
+  transactions:
+    format: parquet
+    tables: [transactions]
+    partition_cols: [year, month]
+
+full_csv:
+  input_path: "../dataset/full"
+  files:
+    articles: articles.csv
+    customers: customers.csv
+    transactions: transactions_train.csv

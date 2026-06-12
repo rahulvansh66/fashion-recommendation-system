@@ -1,0 +1,18 @@
+# Item-level popularity, seasonality, and ratio features.
+# Category always uses garment_group_name per features-eng.md.
+
+columns:
+  category: garment_group_name
+  color: colour_group_name
+
+lookbacks_days:
+  short: 7
+  medium: 30
+  long: 180
+
+# Ratio denominators use +1 smoothing (implemented in builder code)
+derived:
+  - item_recent_to_last_180d_ratio
+  - item_category_recent_to_lifetime_ratio
+  - item_seasonality_strength
+  - days_since_first_sold

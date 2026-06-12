@@ -1,0 +1,13 @@
+# User-level behavior and preference features.
+
+preference:
+  top_n: 3
+  lookback_days: 365
+
+purchase_count_windows_days:
+  short: 30
+  long: 180
+
+decay:
+  half_life_days: 180
+  price_std_floor: 1.0e-6
