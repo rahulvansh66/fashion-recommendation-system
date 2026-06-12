@@ -1,0 +1,15 @@
+# Data pipeline preprocessing and temporal split settings.
+# See docs/implementation-info/guides/features-eng.md for feature vs label windows.
+
+temporal_split:
+  train_end: "2020-03-24"
+  cutoff_date: "2020-03-31"
+  test_end: "2020-04-07"
+  # Inclusive end of feature history when engineering on train data.
+  # null → defaults to train_end at load time.
+  feature_cutoff: "2020-03-24"
+  label_window_days: 7
+
+runtime:
+  # Notebook / local runner: local | glue
+  mode: local

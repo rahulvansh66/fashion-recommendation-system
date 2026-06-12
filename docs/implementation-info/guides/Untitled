@@ -1,1 +1,30 @@
-Example LightGBM feature set
+ things to fix:
+
+ modfy and add sample in val and test in dummy
+
+ data quiality before feature engineering
+- A Glue PySpark job must derive user and item features from the `clean/` zone and write 
+
+
+ ===
+ for ranking model, whats stratergy used for positive and negative sampling, training and eval? 
+
+ , except following things will be different:
+- for ranker model 1 postive and 5 negative instead of 10
+- lightgbm used instead of catboost for ranker
+
+and dont add so much details in about Retrieval  and ranker in @docs/system-design/v1/v1-requirements.md
+
+v0.1: notebook
+
+v0.5: notebook-> pipeline
+
+v1: pipeline->ui and userapi
+
+v1.2 : scaliblility and reliability
+
+Optuna study + many trials
+
+Optuna in SageMaker Processing (orchestrator launches child Training Jobs)
+Parallel trials, production-like
+

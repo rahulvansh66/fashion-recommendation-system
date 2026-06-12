@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Design Complete — Ready for Implementation |
 | **Version** | v1.0 |
-| **Last Updated** | 2026-05-28 |
+| **Last Updated** | 2026-06-10 |
 | **Author** | rahul.vansh |
 | **Related Docs** | [`hld.md`](../hld.md) · [`v1-deliverable.md`](v1-deliverable.md) · [`v1-infrastructure-layer.md`](v1-infrastructure-layer.md) · [`schema-info.md`](../schema-info.md) · [`infrastructure-layer.md`](../infrastructure-layer.md) (pre-v1 reference) |
 
@@ -41,7 +41,7 @@ This document is the **source of truth** for the v1 architecture of the Fashion 
 
 A fully functional, end-to-end fashion recommendation system that:
 
-- Serves **personalized top-10 recommendations** through a 5-stage online pipeline
+- Serves a personalized **top-10** list of articles each customer is **likely to purchase soon**, through a 5-stage online pipeline
 - Demonstrates **visible latency patterns** (cache hit ~15 ms vs. cache miss ~190 ms) as a live engineering talking point
 - Runs at **~$53/mo active** with full stack deployed
 - Is deployable with a **single `terraform apply`** and destroyable with a single `terraform destroy`
@@ -72,7 +72,7 @@ A fully functional, end-to-end fashion recommendation system that:
 
 ### 2.1 What the System Does
 
-The system serves personalized top-10 fashion-article recommendations. The request path runs through five ordered stages: **Cache → Retrieve → Filter → Rank → Order**. Offline batch pipelines train the models, build feature stores, and produce vector indices on a weekly cadence.
+The system serves a personalized **top-10** list of fashion articles each customer is **likely to purchase soon**, based on past purchase history and precomputed features. Offline, **“soon”** is defined by purchases in future label windows (val/test splits in [`v1-requirements.md`](./v1-requirements.md) FR-BATCH-02); online, the ranker scores purchase likelihood as of a feature-cutoff date. The request path runs through five ordered stages: **Cache → Retrieve → Filter → Rank → Order**. Offline batch pipelines train the models, build feature stores, and produce vector indices on a weekly cadence.
 
 ### 2.2 Key Architectural Decisions
 
@@ -114,7 +114,7 @@ Every component decision in this document traces back to one or more of these se
 | 4 | **FAISS over a managed vector DB** | Portable, free, fits dataset size. OpenSearch and Pinecone are documented as scale-up paths. |
 | 5 | **S3 as the single data lake** | One storage substrate. No DynamoDB. Redis is a cache layer, not a system of record. |
 | 6 | **Loose coupling, well-defined interfaces** | Each component has a single responsibility and a documented contract. Swapping a component should not require touching its neighbors. |
-| 7 | **Production patterns over production scale** | Architecture is designed for full H&M scale (1.37M users, 105K items, 31.8M transactions) and deployed on the dev sample (10K users, 5K items, 100K transactions). Architecture is identical; only instance sizing changes. |
+| 7 | **Production patterns over production scale** | Architecture is designed for full H&M scale (1.37M users, 105K items, 31.8M transactions) and deployed on the dev sample (~1K stratified users; articles and transactions derived from sampled users). Architecture is identical; only instance sizing changes. |
 
 ---
 
@@ -548,10 +548,13 @@ s3://fashion-reco-{env}/
 | Framework | PyTorch |
 | Architecture | Two MLP towers (user, item), final layer projects to 256-dim shared embedding space |
 | Loss | Sampled-softmax / contrastive (in-batch negatives) |
-| Training data | `transactions` joined with `users` and `articles` features |
+| Training data | Purchases with `t_dat <= 2020-03-31`, joined with user/item features (feature cutoff §11.4) |
+| Eval | `recall@100` on val/test label-window purchases (§11.4) |
 | Training compute | SageMaker Training Job, `ml.m5.large` spot, ~30 min on dev sample |
 | Output artifacts | `user_tower.pt`, `item_tower.pt` |
 | Serving | SageMaker Endpoint `two-tower-user-tower`, `ml.t3.medium` |
+
+Detail: [`two-tower-retrieval-training-guide.md`](../../implementation-info/two-tower-model/two-tower-retrieval-training-guide.md).
 
 **Why two-tower:** Decouples user and item embedding generation. Item embeddings are precomputed and static between retraining cycles, enabling efficient ANN search. Industry-proven at scale (YouTube, Pinterest, Etsy).
 
@@ -573,11 +576,30 @@ s3://fashion-reco-{env}/
 | Aspect | Choice |
 |---|---|
 | Framework | CatBoost |
-| Features | User features + item features + ~10 cross features (avg price delta, category match flag, recency in category) |
-| Loss | Logistic / pairwise |
+| Task | Binary pair classification: `P(customer buys article soon)` |
+| Features | User features + item features + cross features (see [`features-eng.md`](../../implementation-info/guides/features-eng.md)) |
+| Labels | Positives = purchases in split label window; **5 window-aware negatives per positive** (`seen` exclusion before feature cutoff); `scale_pos_weight = 5` |
+| Loss | Logloss (binary classification) |
 | Training compute | SageMaker Training Job, `ml.m5.large`, ~15 min on dev sample |
 | Serving | SageMaker Endpoint `catboost-ranker`, `ml.t3.medium`, batched per request |
 | Output artifact | `catboost_model.cbm` |
+
+Detail: [`ranking-model-training-guide.md`](../../implementation-info/guides/ranking-model-training-guide.md).
+
+### 11.4 Temporal Splits & Evaluation (offline)
+
+Shared across feature engineering, retrieval, and ranker training ([`v1-requirements.md`](./v1-requirements.md) FR-BATCH-02):
+
+| Split | `t_dat` range | Role |
+|---|---|---|
+| Train | start → **2020-03-31** | Model training |
+| Val | **2020-04-01** → **2020-05-15** | Tuning / early stopping |
+| Test | **2020-05-16** → **2020-06-30** | Final acceptance |
+| Drift 1–3 | **2020-07-01** → **2020-09-30** | Model Monitor only |
+
+**Feature cutoffs:** train/val `2020-03-31`; test `2020-05-15`. No feature may use transactions after the cutoff for that split.
+
+**Pipeline promotion gate (test set):** `recall@100 > baseline` (retrieval) **and** ranker `AUC-PR > baseline` **and** `hit_rate@10 > baseline` (any test-window purchase in served top-10 per user).
 
 ---
 
@@ -609,7 +631,7 @@ flowchart TB
 | Step | Action |
 |---|---|
 | Glue job 1 — data prep | Reads `raw/*.csv`, validates schema, deduplicates, writes `clean/*` parquet partitioned by month |
-| Glue job 2 — feature engineering | Builds user features (purchase frequency, avg price, top categories, recency) and item features (popularity score, days since first sold); writes to `features/` |
+| Glue job 2 — feature engineering | Builds user/item features per temporal cutoffs (§11.4); writes to `features/`; builds ranker training tables with 1:5 window-aware negatives |
 | Glue job 3 — cache warm-up | Writes popular items, per-category top items, per-user seen sets, and `active:users:top6` Redis list directly into Redis |
 | SageMaker Pipeline trigger | Fires asynchronously in parallel with Glue job 3 |
 
@@ -622,7 +644,7 @@ flowchart TB
     train2[SageMaker Training\ntwo-tower model]
     train3[SageMaker Training\ncatboost model]
     eval[SageMaker Processing\nevaluate on holdout]
-    cond{"recall@100 > baseline\nand auc > baseline?"}
+    cond{"recall@100 > baseline\nand AUC-PR > baseline\nand hit_rate@10 > baseline?"}
     register[RegisterModel\nSageMaker Model Registry]
     approval[Manual Approval Gate]
     embed[SageMaker Batch Transform\ncompute item embeddings]
@@ -1062,3 +1084,4 @@ All figures are monthly, USD, us-east-1, on-demand pricing as of 2026.
 | Date | Version | Author | Notes |
 |---|---|---|---|
 | 2026-05-28 | v1.0 | rahul.vansh | Initial v1 HLD — scoped from full HLD to v1 deliverable |
+| 2026-06-10 | v1.0 | rahul.vansh | Aligned ML problem statement, temporal splits, window-aware ranker labels, and eval gates with v1-requirements FR-BATCH-02/04 |

@@ -1,0 +1,15 @@
+# User–item cross features (CatBoost ranker inputs).
+
+decay:
+  half_life_days: 180
+
+price:
+  # Candidate item price = mean transaction price per article in feature history
+  use_article_avg_price: true
+  std_floor: 1.0e-6
+
+derived:
+  - user_item_repurchase
+  - user_item_decayed_repurchase
+  - user_item_decayed_interaction_ratio
+  - user_item_price_decayed_zscore

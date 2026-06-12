@@ -1,0 +1,39 @@
+# Frozen two-tower retrieval defaults (see docs/implementation-info/two-tower-model/two-tower-retrieval-training-guide.md).
+# After HPO, overwrite with study.best_params.
+
+embedding_dim: 16
+batch_size: 2048
+epochs: 10
+learning_rate: 0.01
+weight_decay: 0.001
+
+# FR-BATCH-02 temporal split (v1-requirements.md)
+temporal_split:
+  train_end: "2020-03-31"
+  val_start: "2020-04-01"
+  val_end: "2020-05-15"
+  test_start: "2020-05-16"
+  test_end: "2020-06-30"
+
+# Canonical feature columns (no renaming at load time)
+query_features:
+  - customer_id
+  - age
+  - txn_month_sin
+  - txn_month_cos
+
+candidate_features:
+  - article_id
+  - item_category
+  - index_group_name
+
+sagemaker:
+  instance_type: ml.m5.large
+  use_spot: true
+  volume_size_gb: 30
+
+optuna:
+  study_name: two_tower_hpo_v1
+  n_trials: 3
+  direction: maximize
+  objective_metric: val_recall_at_100

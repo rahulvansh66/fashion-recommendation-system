@@ -8,7 +8,7 @@ dist/
 build/
 *.exe
 *.pyc
-tmp/
+
 
 # Ignore environment secrets (Crucial for security!)
 .env
@@ -21,3 +21,5 @@ data/*.csv
 
 # Ignore my docs, its for my knowledege and planing 
 docs/my-docs/
+
+tmp/

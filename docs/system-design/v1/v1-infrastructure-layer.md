@@ -41,7 +41,7 @@ Ship a learning-grade, production-pattern recommendation stack that:
 | **SageMaker-centric ML** | User-tower + CatBoost inference on SageMaker Endpoints (A/B, canary, Model Monitor) |
 | **FAISS over managed vector DB** | Lambda + S3-backed index; OpenSearch/Pinecone documented as scale-up paths |
 | **S3 as data lake** | No DynamoDB; Redis is cache only, not system of record |
-| **Production patterns, dev sample scale** | Architecture matches full H&M scale; deployed on 10K users / 5K items / 100K transactions |
+| **Production patterns, dev sample scale** | Architecture matches full H&M scale; deployed on ~1K stratified users (articles and transactions derived from sampled users) |
 
 **Target cost (from v1 HLD):** ~$45 over 2–3 months with local-first dev and SageMaker endpoints only during active sessions.
 
@@ -51,14 +51,14 @@ Ship a learning-grade, production-pattern recommendation stack that:
 
 | Table | Full scale | Dev sample (v1 deploy) | Role |
 |-------|-----------|------------------------|------|
-| `articles.csv` | 105K | 5K items | Product catalog |
-| `customers.csv` | 1.37M | 10K users | Demographics |
-| `transactions_train.csv` | 31.8M | 100K interactions | Purchase history |
+| `articles.csv` | 105K | Derived from sampled users' transactions | Product catalog |
+| `customers.csv` | 1.37M | ~1K users (stratified sample) | Demographics |
+| `transactions_train.csv` | 31.8M | All interactions for sampled users | Purchase history |
 
 - **Star schema** — transactions fact, articles + customers dimensions  
 - **Privacy** — customer IDs and postal codes pre-hashed in source data  
 - **Schema detail** — [`../schema-info.md`](../schema-info.md)  
-- **Local path (pre-pipeline)** — `dataset/sample/`; **AWS** — `s3://fashion-reco-{env}/raw/` → `clean/` → `features/`
+- **Local path (pre-pipeline)** — `dataset/sample/` (produced by `notebooks/stratified_user_sampling.ipynb`); **AWS** — `s3://fashion-reco-{env}/raw/` → `clean/` → `features/`
 
 ---
 

@@ -1,3 +1,10 @@
+# Python virtual environments
+.venv/
+.venv-notebooks/
+
+# Windows Hadoop shim for local PySpark Parquet writes (see java-pyspark-local-setup.md)
+.hadoop-win/
+
 # Ignore environment secrets (Crucial for security!)
 .env
 .env.local
@@ -5,3 +12,5 @@
 
 # Ignore large data files or logs
 dataset/
+
+tmp/

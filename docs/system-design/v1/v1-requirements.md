@@ -4,7 +4,7 @@
 |---------------|-----------------------------------------------------------------------------------------------------------|
 | **Status**    | Approved                                                                                                  |
 | **Version**   | v1.0                                                                                                      |
-| **Last Updated** | 2026-05-29                                                                                             |
+| **Last Updated** | 2026-06-10                                                                                             |
 | **Author**    | rahul.vansh                                                                                               |
 | **Related Docs** | [`v1-hld.md`](./v1-hld.md) · [`v1-deliverable.md`](../v1-deliverable.md) · [`schema-info.md`](../schema-info.md) |
 
@@ -47,7 +47,7 @@ This document defines the complete functional and non-functional requirements fo
 
 ### 1.2 Background
 
-The system serves personalized top-10 fashion article recommendations for customers of the H&M dataset. V1 is built as a learning-grade, production-pattern system: it demonstrates real-world ML engineering patterns (two-stage retrieval + ranking, result caching, circuit breakers, canary deployment) while remaining deployable on a $30–40 total budget.
+The system serves a personalized **top-10** list of fashion articles each customer is **likely to purchase soon**, based on past purchase history and precomputed user/item features. Offline, **“soon”** is defined by purchases occurring within a future **label window** (val/test splits in FR-BATCH-02); online, the ranker scores purchase likelihood as of a feature-cutoff date. V1 is built as a learning-grade, production-pattern system: it demonstrates real-world ML engineering patterns (two-stage retrieval + ranking, result caching, circuit breakers, canary deployment) while remaining deployable on a $30–40 total budget.
 
 ### 1.3 Requirement Priority Convention
 
@@ -443,9 +443,37 @@ A Glue PySpark job must derive user and item features from the `clean/` zone and
 Required user features: purchase frequency, average price paid, top-N purchased categories, recency (days since last transaction).
 Required item features: popularity score (transaction count), days since first sold.
 
+**Temporal split (shared with sampling, feature engineering, and model training):**
+
+| Split | Date range | Rule |
+|-------|------------|------|
+| **Train** | start → **2020-03-31** | `t_dat <= 2020-03-31` |
+| **Val** | **2020-04-01** → **2020-05-15** | `2020-04-01 <= t_dat <= 2020-05-15` |
+| **Test** | **2020-05-16** → **2020-06-30** | `2020-05-16 <= t_dat <= 2020-06-30` |
+| **Drift 1** | **2020-07-01** → **2020-07-31** | Model Monitor only (not used for model selection) |
+| **Drift 2** | **2020-08-01** → **2020-08-31** | Model Monitor only |
+| **Drift 3** | **2020-09-01** → **2020-09-30** | Model Monitor only |
+
+**Feature cutoff** (inclusive end of transaction history used to compute features — no label leakage):
+
+| Split / role | Feature cutoff |
+|--------------|----------------|
+| Train | `2020-03-31` |
+| Val | `2020-03-31` |
+| Test | `2020-05-15` |
+
+**Ranker labels** (binary pair classification; see [`ranking-model-training-guide.md`](../../implementation-info/guides/ranking-model-training-guide.md) for implementation detail):
+
+- **Positive:** each `(customer_id, article_id)` purchase in the split's label window (train window = train dates; val/test windows = val/test dates above).
+- **Negative:** **5 window-aware negatives per positive** — for the same customer, sample articles the customer did **not** purchase in that label window and had **not** purchased before the split's feature cutoff (`seen` exclusion).
+- **Ratio:** 1 positive : 5 negatives; `scale_pos_weight = 5` (or equivalent class weighting).
+
+Full feature definitions: [`features-eng.md`](../../implementation-info/guides/features-eng.md).
+
 **Acceptance criteria:**
 - Feature output is written to `features/users/customer_id={cid}/` and `features/items/article_id={aid}/` as Parquet.
-- All user features are computable from `customers.csv` and `transactions_train.csv` alone.
+- All user features are computable from the `clean/` zone (`customers` and pre-cutoff `transactions`) alone.
+- No feature uses transactions with `t_dat` after the feature cutoff for that split (no label leakage).
 
 ---
 
@@ -468,11 +496,11 @@ A Glue PySpark job (daily, 03:00 UTC) must write the following Redis keys from f
 **Priority:** MUST
 
 The ML pipeline must execute the following DAG:
-1. SageMaker Processing job: build training tables from `features/`.
+1. SageMaker Processing job: build training tables from `features/` and label windows per FR-BATCH-02 (train / val / test splits; 1:5 window-aware negatives for the ranker).
 2. SageMaker Training job: train the Two-Tower model.
-3. SageMaker Training job: train the CatBoost model (parallel with step 2).
-4. SageMaker Processing job: evaluate both models on a holdout set.
-5. Conditional gate: proceed only if `recall@100 > baseline` and `AUC > baseline`.
+3. SageMaker Training job: train the CatBoost ranker (parallel with step 2).
+4. SageMaker Processing job: evaluate both models on the val and test holdout sets.
+5. Conditional gate: proceed only if `recall@100 > baseline`, ranker `AUC-PR > baseline` on the test set, and `hit_rate@10 > baseline` on the test set (any test-window purchase appears in the served top-10 list per user).
 6. Register models in SageMaker Model Registry.
 7. Manual approval gate.
 8. SageMaker Batch Transform: compute item embeddings.
@@ -489,7 +517,7 @@ The ML pipeline must execute the following DAG:
 #### FR-BATCH-05 — Drift Monitoring
 **Priority:** SHOULD
 
-SageMaker Model Monitor must run daily (04:00 UTC) to compare live inference data against the training baseline for both the user-tower and CatBoost endpoints.
+SageMaker Model Monitor must run daily (04:00 UTC) to compare live inference data against the training baseline for both the user-tower and CatBoost endpoints. Offline drift reference slices use the **Drift 1–3** date ranges in FR-BATCH-02 (`2020-07-01`–`2020-09-30`); these slices are for monitoring only and must not be used for hyperparameter tuning or model promotion gates.
 
 **Acceptance criteria:**
 - Model Monitor baseline is established on first model deployment.
@@ -657,7 +685,7 @@ All stateless components (ECS Fargate application, FAISS Lambda) must scale hori
 #### NFR-SCALE-02 — Architecture Parity (Dev vs. Full Dataset)
 **Priority:** MUST
 
-The architecture must be identical for the 10K-user development sample and the full 1.37M-user H&M dataset. Scaling must require only instance sizing and data path changes — no structural modifications.
+The architecture must be identical for the ~1K-user development sample and the full 1.37M-user H&M dataset. Scaling must require only instance sizing and data path changes — no structural modifications.
 
 ---
 
@@ -841,7 +869,8 @@ Every push to the `main` branch must trigger the full CI/CD pipeline (lint, unit
 | ID       | Constraint                                                                                                 |
 |----------|------------------------------------------------------------------------------------------------------------|
 | CON-01   | The system must deploy entirely within a single AWS region (us-east-1) in v1.                              |
-| CON-02   | The development dataset is limited to 10K users, 5K articles, 100K transactions to control training cost.  |
+| CON-02   | The development dataset is limited to ~1K stratified users (articles and transactions derived from sampled users) to control training cost.  |
+| CON-09   | All offline pipelines share one temporal convention (FR-BATCH-02): **train** `t_dat <= 2020-03-31`; **val** `2020-04-01`–`2020-05-15`; **test** `2020-05-16`–`2020-06-30`; **drift** `2020-07-01`–`2020-09-30` (monitoring only). Feature cutoffs: train/val `2020-03-31`, test `2020-05-15`. Ranker uses 1 positive : 5 window-aware negatives per split. |
 | CON-03   | No real user authentication infrastructure (Cognito, OAuth) is required for v1. `rr/rr` is the only valid credential. |
 | CON-04   | ECS Fargate tasks must use 0.5 vCPU / 1.0 GB sizing for the unified application. SageMaker endpoints must use `ml.t3.medium` instances unless a performance NFR cannot be satisfied at that sizing. |
 | CON-05   | The FAISS index must fit within Lambda's 10 GB memory limit (estimated < 300 MB for the full H&M dataset). |

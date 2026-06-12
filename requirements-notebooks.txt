@@ -1,0 +1,10 @@
+# Jupyter / EDA / PySpark notebooks (local[*] only — not distributed Glue)
+# PySpark 3.4.x runs on Java 8+; 3.5+ requires Java 17
+PyYAML>=6.0
+pyspark>=3.4.0,<3.5
+jupyter>=1.0
+ipykernel>=6.0
+pandas>=2.0
+pyarrow>=14.0
+python-dotenv>=1.0
+nbformat>=5.0
