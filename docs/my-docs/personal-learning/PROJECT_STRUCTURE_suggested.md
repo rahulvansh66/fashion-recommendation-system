@@ -8,7 +8,7 @@ The platform contains four major systems:
 
 1. **Two-stage recommendation pipeline**
    - Stage 1: Two-Tower retrieval model with FAISS candidate generation
-   - Stage 2: CatBoost ranking model
+   - Stage 2: XGBoost ranking model
 
 2. **Offline feature engineering pipeline**
    - Cleans raw data
@@ -43,7 +43,7 @@ Recommendation Orchestrator
         |-- Fetch user features from Redis / S3 fallback
         |-- Call Two-Tower SageMaker Endpoint
         |-- Call FAISS candidate retrieval
-        |-- Call CatBoost SageMaker Endpoint
+        |-- Call XGBoost SageMaker Endpoint
         |-- Apply business rules and post-processing
         v
 Top-K recommended articles
@@ -108,7 +108,7 @@ fashion-recsys-platform/
 │   │
 │   ├── models/
 │   │   ├── two_tower.yaml
-│   │   ├── catboost_ranker.yaml
+│   │   ├── xgboost_ranker.yaml
 │   │   ├── llm_tag_extractor.yaml
 │   │   └── rag.yaml
 │   │
@@ -223,7 +223,7 @@ RecommendationResponse
 UserFeatureVector
 ItemFeatureVector
 CandidateItem
-CatBoostPredictionRequest
+XGBoostPredictionRequest
 TwoTowerEmbeddingResponse
 RagChatRequest
 RagChatResponse
@@ -262,7 +262,7 @@ src/fashion_recsys/data/
 │
 └── datasets/
     ├── two_tower_dataset.py
-    ├── catboost_dataset.py
+    ├── xgboost_dataset.py
     └── rag_dataset.py
 ```
 
@@ -345,7 +345,7 @@ This folder converts cleaned and feature-enriched data into model-specific datas
 Examples:
 
 - Two-Tower PyTorch dataset
-- CatBoost ranking dataset
+- XGBoost ranking dataset
 - RAG indexing dataset
 
 This folder prepares data for model consumption, but it should not contain general cleaning logic.
@@ -380,7 +380,7 @@ src/fashion_recsys/features/
 │   └── build_cross_features.py
 │
 ├── selection/
-│   ├── catboost_feature_selection.py
+│   ├── xgboost_feature_selection.py
 │   ├── two_tower_feature_selection.py
 │   ├── feature_importance.py
 │   ├── shap_analysis.py
@@ -417,7 +417,7 @@ Examples:
 - Style tag preferences
 - Days since last purchase
 
-These features can be consumed by both the Two-Tower model and CatBoost ranker.
+These features can be consumed by both the Two-Tower model and XGBoost ranker.
 
 ---
 
@@ -451,7 +451,7 @@ Examples:
 - Color affinity match
 - Department affinity match
 
-These are especially important for CatBoost ranking.
+These are especially important for XGBoost ranking.
 
 ---
 
@@ -461,7 +461,7 @@ Feature selection logic belongs here.
 
 Examples:
 
-- CatBoost feature importance
+- XGBoost feature importance
 - SHAP analysis
 - Permutation importance
 - Correlation checks
@@ -530,7 +530,7 @@ src/fashion_recsys/models/
 │       └── publish_index.py
 │
 ├── ranking/
-│   └── catboost/
+│   └── xgboost/
 │       ├── train.py
 │       ├── evaluate.py
 │       ├── features.py
@@ -615,9 +615,9 @@ Never deploy `faiss.index` without its item mapping.
 
 ---
 
-### 9.3 `models/ranking/catboost/`
+### 9.3 `models/ranking/xgboost/`
 
-This folder contains the CatBoost ranker.
+This folder contains the XGBoost ranker.
 
 Responsibilities:
 
@@ -628,7 +628,7 @@ Responsibilities:
 - Evaluate ranking quality
 - Export model for SageMaker inference
 
-CatBoost-specific preprocessing belongs here.
+XGBoost-specific preprocessing belongs here.
 
 Examples:
 
@@ -637,12 +637,12 @@ Examples:
 - Add group/query IDs
 - Define categorical columns
 - Define numerical columns
-- Prepare CatBoost Pool object
+- Prepare XGBoost Pool object
 
 Important rule:
 
 ```text
-CatBoost feature list should live in config or feature_config.py, not inside train.py.
+XGBoost feature list should live in config or feature_config.py, not inside train.py.
 ```
 
 ---
@@ -669,7 +669,7 @@ articles_clean.parquet
   -> article_tags.parquet
   -> user_tag_features.parquet
   -> normal feature pipeline
-  -> Two-Tower and CatBoost training
+  -> Two-Tower and XGBoost training
 ```
 
 ---
@@ -738,7 +738,7 @@ src/fashion_recsys/serving/
 │   │   ├── requirements.txt
 │   │   └── Dockerfile
 │   │
-│   └── catboost/
+│   └── xgboost/
 │       ├── inference.py
 │       ├── requirements.txt
 │       └── Dockerfile
@@ -777,7 +777,7 @@ Responsibilities:
 - Fetch user features
 - Call Two-Tower endpoint
 - Call FAISS retrieval service
-- Call CatBoost ranking endpoint
+- Call XGBoost ranking endpoint
 - Apply business rules
 - Apply fallback logic
 - Return final top-K products
@@ -809,7 +809,7 @@ This folder contains SageMaker inference container code.
 Separate inference containers are recommended for:
 
 - Two-Tower user embedding endpoint
-- CatBoost ranking endpoint
+- XGBoost ranking endpoint
 
 Each should have its own `inference.py`, dependencies, and Dockerfile.
 
@@ -871,7 +871,7 @@ user query
 
 ### Best practice
 
-Do not call the recommendation Two-Tower or CatBoost stack from the chatbot by default. The chatbot should be content-grounded and query-driven.
+Do not call the recommendation Two-Tower or XGBoost stack from the chatbot by default. The chatbot should be content-grounded and query-driven.
 
 ---
 
@@ -881,7 +881,7 @@ Do not call the recommendation Two-Tower or CatBoost stack from the chatbot by d
 src/fashion_recsys/pipelines/
 ├── sagemaker/
 │   ├── two_tower_pipeline.py
-│   ├── catboost_pipeline.py
+│   ├── xgboost_pipeline.py
 │   ├── llm_tag_pipeline.py
 │   ├── rag_index_pipeline.py
 │   └── shared_steps.py
@@ -891,7 +891,7 @@ src/fashion_recsys/pipelines/
 │   │   ├── daily_feature_refresh.py
 │   │   ├── weekly_llm_tag_extraction.py
 │   │   ├── two_tower_retrain.py
-│   │   ├── catboost_retrain.py
+│   │   ├── xgboost_retrain.py
 │   │   └── rag_index_refresh.py
 │   └── plugins/
 │
@@ -910,7 +910,7 @@ Examples:
 - Daily feature refresh
 - Weekly LLM tag extraction
 - Two-Tower retraining
-- CatBoost retraining
+- XGBoost retraining
 - FAISS index rebuild
 - RAG index rebuild
 - Model registration and promotion
@@ -1049,7 +1049,7 @@ articles:
     colour_group_name: unknown
 ```
 
-### Example CatBoost config
+### Example XGBoost config
 
 ```yaml
 features:
@@ -1135,7 +1135,7 @@ deployment/
 │   ├── faiss_lambda.Dockerfile
 │   ├── rag_api.Dockerfile
 │   ├── two_tower_inference.Dockerfile
-│   └── catboost_inference.Dockerfile
+│   └── xgboost_inference.Dockerfile
 │
 ├── scripts/
 │   ├── build_images.sh
@@ -1197,7 +1197,7 @@ They should verify:
 
 - Recommendation API schema
 - Two-Tower endpoint input/output
-- CatBoost endpoint input/output
+- XGBoost endpoint input/output
 - Feature schema compatibility
 - RAG request/response schema
 
@@ -1222,7 +1222,7 @@ data_contracts/
 ├── articles.schema.json
 ├── user_features.schema.json
 ├── item_features.schema.json
-├── catboost_training.schema.json
+├── xgboost_training.schema.json
 └── rag_chunks.schema.json
 ```
 
@@ -1248,7 +1248,7 @@ Example checks:
 model_artifacts/
 ├── README.md
 ├── two_tower/
-├── catboost/
+├── xgboost/
 ├── faiss/
 └── rag/
 ```
@@ -1267,7 +1267,7 @@ Recommended S3 layout:
 s3://fashion-recsys-prod-artifacts/
 ├── models/
 │   ├── two_tower/version=2026-05-26-001/
-│   └── catboost/version=2026-05-26-001/
+│   └── xgboost/version=2026-05-26-001/
 │
 ├── indexes/
 │   ├── faiss_retrieval/version=2026-05-26-001/
@@ -1315,7 +1315,7 @@ FAISS service:
 - Index load time
 - Candidate count distribution
 
-CatBoost endpoint:
+XGBoost endpoint:
 
 - Ranking latency
 - Error rate
@@ -1388,7 +1388,7 @@ docs/
 └── adr/
     ├── 0001-use-two-stage-retrieval-ranking.md
     ├── 0002-use-faiss-for-ann.md
-    ├── 0003-use-catboost-for-ranking.md
+    ├── 0003-use-xgboost-for-ranking.md
     ├── 0004-separate-rag-from-recommendations.md
     └── 0005-use-lambda-web-adapter.md
 ```
@@ -1403,7 +1403,7 @@ ADR means Architecture Decision Record.
 
 Use ADRs to document important choices, such as:
 
-- Why Two-Tower + CatBoost was selected
+- Why Two-Tower + XGBoost was selected
 - Why FAISS was selected
 - Why RAG is separate from recommendations
 - Why Lambda Web Adapter is used
@@ -1442,7 +1442,7 @@ s3://fashion-recsys-prod-data/
 │
 ├── training/
 │   ├── two_tower/
-│   └── catboost/
+│   └── xgboost/
 │
 ├── inference/
 │   ├── user_features_latest/
@@ -1486,12 +1486,12 @@ Do not overwrite historical training data. Use date partitions or versioned path
 | Build user purchase history | `features/user_features/purchase_history.py` |
 | Build price affinity | `features/user_features/price_affinity.py` |
 | Build category overlap | `features/cross_features/user_item_category_overlap.py` |
-| Select CatBoost features | `features/selection/catboost_feature_selection.py` |
+| Select XGBoost features | `features/selection/xgboost_feature_selection.py` |
 | Select Two-Tower features | `features/selection/two_tower_feature_selection.py` |
 | Prepare Two-Tower pairs | `models/retrieval/two_tower/preprocess.py` |
 | Negative sampling | `models/retrieval/two_tower/dataset.py` |
-| Prepare CatBoost ranking frame | `models/ranking/catboost/preprocess.py` |
-| Define CatBoost feature list | `models/ranking/catboost/feature_config.py` |
+| Prepare XGBoost ranking frame | `models/ranking/xgboost/preprocess.py` |
+| Define XGBoost feature list | `models/ranking/xgboost/feature_config.py` |
 | Write features to S3 | `features/store/offline_writer.py` |
 | Write hot features to Redis | `features/store/online_writer.py` |
 | Fetch features at inference | `serving/recommendation_service/feature_fetcher.py` |
@@ -1652,7 +1652,7 @@ API -> Orchestrator
 Orchestrator -> Redis
 Orchestrator -> SageMaker Two-Tower
 Orchestrator -> FAISS
-Orchestrator -> SageMaker CatBoost
+Orchestrator -> SageMaker XGBoost
 Feature pipeline -> training
 Training -> serving
 RAG retrieval -> LLM generation
@@ -1692,7 +1692,7 @@ A production model should always be traceable back to the exact data and code th
 | Offline features | S3 or SageMaker Feature Store offline store |
 | Feature management | SageMaker Feature Store, optional |
 | Two-Tower inference | SageMaker real-time endpoint |
-| CatBoost inference | SageMaker real-time endpoint |
+| XGBoost inference | SageMaker real-time endpoint |
 | FAISS search | Lambda, ECS Fargate, EKS, or SageMaker endpoint |
 | Batch feature jobs | SageMaker Processing, Glue, or EMR Serverless |
 | Training jobs | SageMaker Training Jobs |
@@ -1776,13 +1776,13 @@ s3://bucket/artifacts/indexes/faiss_retrieval/
 ### Step 6: Train ranking model
 
 ```text
-models/ranking/catboost/
+models/ranking/xgboost/
 ```
 
 Output:
 
 ```text
-s3://bucket/artifacts/models/catboost/
+s3://bucket/artifacts/models/xgboost/
 ```
 
 ### Step 7: Register and promote models
@@ -1848,7 +1848,7 @@ fashion-recsys-staging-recommendation-api
 fashion-recsys-prod-recommendation-api
 
 fashion-recsys-prod-two-tower-endpoint
-fashion-recsys-prod-catboost-endpoint
+fashion-recsys-prod-xgboost-endpoint
 
 fashion-recsys-prod-faiss-retrieval-v2026-05-26
 fashion-recsys-prod-faiss-rag-v2026-05-26
@@ -1858,7 +1858,7 @@ fashion-recsys-prod-faiss-rag-v2026-05-26
 
 ```text
 s3://fashion-recsys-prod-artifacts/models/two_tower/version=2026-05-26-001/model.tar.gz
-s3://fashion-recsys-prod-artifacts/models/catboost/version=2026-05-26-001/model.tar.gz
+s3://fashion-recsys-prod-artifacts/models/xgboost/version=2026-05-26-001/model.tar.gz
 s3://fashion-recsys-prod-artifacts/indexes/faiss_retrieval/version=2026-05-26-001/faiss.index
 s3://fashion-recsys-prod-artifacts/indexes/faiss_rag/version=2026-05-26-001/faiss_rag.index
 ```
@@ -1869,7 +1869,7 @@ s3://fashion-recsys-prod-artifacts/indexes/faiss_rag/version=2026-05-26-001/fais
 fashion-recsys/recommendation-api:git-sha
 fashion-recsys/faiss-lambda:git-sha
 fashion-recsys/two-tower-inference:git-sha
-fashion-recsys/catboost-inference:git-sha
+fashion-recsys/xgboost-inference:git-sha
 fashion-recsys/rag-api:git-sha
 ```
 
@@ -1887,7 +1887,7 @@ Before production launch, verify:
 - [ ] Outlier handling is documented
 - [ ] Time-based train/test split is used
 - [ ] Two-Tower model is evaluated with Recall@K
-- [ ] CatBoost model is evaluated with NDCG@K or ranking metrics
+- [ ] XGBoost model is evaluated with NDCG@K or ranking metrics
 - [ ] FAISS index includes item ID mapping
 - [ ] FAISS index is versioned
 - [ ] Model artifacts are stored in S3

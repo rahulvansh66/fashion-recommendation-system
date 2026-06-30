@@ -389,7 +389,7 @@ self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
 **Why top-100 is the headline metric:**
 
-The retrieval model is Stage 1 in a two-stage pipeline. The CatBoost ranker (Stage 2) will only score the top-K candidates returned by retrieval. If the truly purchased article is not in the retrieved top-100, the ranker has zero chance of surfacing it. Top-100 recall is therefore the direct business-relevant metric: it measures whether Stage 1 keeps the correct answer in the candidate set for Stage 2 to rank.
+The retrieval model is Stage 1 in a two-stage pipeline. The XGBoost ranker (Stage 2) will only score the top-K candidates returned by retrieval. If the truly purchased article is not in the retrieved top-100, the ranker has zero chance of surfacing it. Top-100 recall is therefore the direct business-relevant metric: it measures whether Stage 1 keeps the correct answer in the candidate set for Stage 2 to rank.
 
 ---
 
@@ -425,19 +425,19 @@ All hyperparameters are defined in `recsys/config.py` (`Settings` class):
 | `TWO_TOWER_NUM_EPOCHS`                   | `10`                      | Training epochs                                |
 | `TWO_TOWER_LEARNING_RATE`                | `0.01`                    | AdamW learning rate                            |
 | `TWO_TOWER_WEIGHT_DECAY`                 | `0.001`                   | AdamW L2 weight decay                          |
-| `TWO_TOWER_DATASET_VALIDATON_SPLIT_SIZE` | `0.1`                     | Validation fraction                            |
-| `TWO_TOWER_DATASET_TEST_SPLIT_SIZE`      | `0.1`                     | Test fraction (reserved by feature view)       |
+| `TWO_TOWER_DATASET_VALIDATON_SPLIT_SIZE` | *deprecated*              | Replaced by snap-date val windows (FR-BATCH-02) |
+| `TWO_TOWER_DATASET_TEST_SPLIT_SIZE`      | *deprecated*              | Replaced by snap-date test window (FR-BATCH-02) |
 | `CUSTOMER_DATA_SIZE`                     | `SMALL` (1,000 customers) | Upstream dataset sampling size                 |
 
 
-**Optimizer:** `tf.keras.optimizers.AdamW` with the learning rate and weight decay above.
+**Optimizer:** `torch.optim.AdamW` with the learning rate and weight decay above.
 
 **Initialization:**
 
 - Age `Normalization` layer is adapted on the training dataset before the first epoch.
 - Query tower is warm-started with a single batch from `query_df` to build lookup tables.
 
-**Framework:** TensorFlow + `tensorflow_recommenders` (`tfrs.tasks.Retrieval`, `tfrs.metrics.FactorizedTopK`).
+**Framework:** PyTorch (`torch.nn`, manual training loop, Recall@K in `evaluate.py`).
 
 ---
 
@@ -461,10 +461,10 @@ The notebook highlights **top-100 accuracy** as the headline retrieval metric: f
 
 ### 6.2 Evaluation procedure
 
-1. Build candidate index from **deduplicated training articles** (`get_items_subset()`).
+1. Build candidate index from **deduplicated train-split articles** (encoded through the candidate tower once per epoch).
 2. For each validation batch, compute query and item embeddings.
-3. `FactorizedTopK` scores every query against the full candidate embedding matrix.
-4. Report top-K hit rates and validation loss (`val_loss`, `val_total_loss`).
+3. Compute dot products of each query embedding against the full candidate matrix (`Recall@K` in `evaluate.py`).
+4. Report `val_recall_at_100` (headline metric) and per-epoch val loss.
 
 ### 6.3 Training vs validation monitoring
 
@@ -479,7 +479,7 @@ Loss curves (training vs validation) are plotted at the end of the notebook to c
 ### 6.4 What evaluation does not cover
 
 - **Cold-start users/items** not seen in training vocabularies fall back to the `+1` unknown embedding slot; performance on truly new IDs is not separately reported.
-- **Ranking quality** (precision of ordering within top-100) is deferred to the CatBoost ranking model in notebook 3.
+- **Ranking quality** (precision of ordering within top-100) is deferred to the XGBoost ranking model in notebook 3.
 - **Test split** (10%) is created by the feature view but not evaluated in notebook 2.
 
 ---

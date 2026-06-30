@@ -1,97 +1,67 @@
-"""Two-tower retrieval model with log-q popularity correction."""
+"""PyTorch query and candidate towers for two-tower retrieval."""
 
 from __future__ import annotations
 
-import tensorflow as tf
-import tensorflow_recommenders as tfrs
-
-from fashion_recommendation_system.models.retrieval.two_tower.towers import (
-    ItemTower,
-    QueryTower,
-)
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
-class TwoTowerModel(tf.keras.Model):
-    """Dual-encoder model with in-batch contrastive loss and log-q debiasing."""
+class QueryTower(nn.Module):
+    """Encode user identity and temporal context into a shared embedding space."""
+
+    def __init__(self, num_users: int, emb_dim: int) -> None:
+        super().__init__()
+        # +1 for unknown customer at index 0.
+        self.customer_embedding = nn.Embedding(num_users + 1, emb_dim)
+        self.fnn = nn.Sequential(
+            nn.Linear(emb_dim + 3, emb_dim),
+            nn.ReLU(),
+            nn.Linear(emb_dim, emb_dim),
+        )
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Return query embeddings of shape (batch, emb_dim)."""
+        customer_vec = self.customer_embedding(batch["customer_idx"])
+        features = torch.stack(
+            [
+                customer_vec,
+                batch["age"].unsqueeze(1),
+                batch["txn_month_sin"].unsqueeze(1),
+                batch["txn_month_cos"].unsqueeze(1),
+            ],
+            dim=1,
+        )
+        concatenated = features.reshape(features.size(0), -1)
+        return self.fnn(concatenated)
+
+
+class ItemTower(nn.Module):
+    """Encode item identity and category metadata into the shared space."""
 
     def __init__(
         self,
-        query_model: QueryTower,
-        item_model: ItemTower,
-        item_ds: tf.data.Dataset,
-        batch_size: int,
-        label_probs_table: tf.lookup.StaticHashTable,
+        num_items: int,
+        num_categories: int,
+        num_index_groups: int,
+        emb_dim: int,
     ) -> None:
         super().__init__()
-        self.query_model = query_model
-        self.item_model = item_model
-        self.label_probs_table = label_probs_table
-        self.task = tfrs.tasks.Retrieval(
-            metrics=tfrs.metrics.FactorizedTopK(
-                candidates=item_ds.batch(batch_size).map(self.item_model)
-            )
+        self.num_categories = num_categories
+        self.num_index_groups = num_index_groups
+        # +1 for unknown article at index 0.
+        self.article_embedding = nn.Embedding(num_items + 1, emb_dim)
+        input_dim = emb_dim + num_categories + num_index_groups
+        self.fnn = nn.Sequential(
+            nn.Linear(input_dim, emb_dim),
+            nn.ReLU(),
+            nn.Linear(emb_dim, emb_dim),
         )
 
-    def _compute_logits(
-        self,
-        batch: dict[str, tf.Tensor],
-        training: bool,
-    ) -> tf.Tensor:
-        user_embeddings = self.query_model(batch, training=training)
-        item_embeddings = self.item_model(batch, training=training)
-        return tf.matmul(user_embeddings, item_embeddings, transpose_b=True)
-
-    def _popularity_corrected_loss(
-        self,
-        batch: dict[str, tf.Tensor],
-        logits: tf.Tensor,
-    ) -> tf.Tensor:
-        """In-batch softmax CE with log-q correction (training only)."""
-        article_indices = self.item_model.article_lookup(batch["article_id"])
-        label_probs = self.label_probs_table.lookup(article_indices)
-        # Column j corresponds to item j in the batch; subtract log P(item_j).
-        corrected_logits = logits - tf.math.log(label_probs)[tf.newaxis, :]
-        batch_size = tf.shape(logits)[0]
-        labels = tf.range(batch_size)
-        per_example = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=labels,
-            logits=corrected_logits,
-        )
-        return tf.reduce_mean(per_example)
-
-    def train_step(self, batch: dict[str, tf.Tensor]) -> dict[str, tf.Tensor]:
-        with tf.GradientTape() as tape:
-            logits = self._compute_logits(batch, training=True)
-            loss = self._popularity_corrected_loss(batch, logits)
-            regularization_loss = sum(self.losses)
-            total_loss = loss + regularization_loss
-
-        gradients = tape.gradient(total_loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-
-        return {
-            "loss": loss,
-            "regularization_loss": regularization_loss,
-            "total_loss": total_loss,
-        }
-
-    def test_step(self, batch: dict[str, tf.Tensor]) -> dict[str, tf.Tensor]:
-        user_embeddings = self.query_model(batch, training=False)
-        item_embeddings = self.item_model(batch, training=False)
-        loss = self.task(user_embeddings, item_embeddings, compute_metrics=True)
-        regularization_loss = sum(self.losses)
-        total_loss = loss + regularization_loss
-
-        metrics = {metric.name: metric.result() for metric in self.metrics}
-        metrics["loss"] = loss
-        metrics["regularization_loss"] = regularization_loss
-        metrics["total_loss"] = total_loss
-        return metrics
-
-    def evaluate_dataset(self, dataset: tf.data.Dataset) -> dict[str, float]:
-        """Run validation/test and return scalar metrics."""
-        for metric in self.metrics:
-            metric.reset_states()
-        for batch in dataset:
-            self.test_step(batch)
-        return {metric.name: float(metric.result().numpy()) for metric in self.metrics}
+    def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Return item embeddings of shape (batch, emb_dim)."""
+        article_vec = self.article_embedding(batch["article_idx"])
+        category_one_hot = F.one_hot(batch["category_idx"], self.num_categories).float()
+        index_one_hot = F.one_hot(batch["index_group_idx"], self.num_index_groups).float()
+        concatenated = torch.cat([article_vec, category_one_hot, index_one_hot], dim=1)
+        return self.fnn(concatenated)

@@ -38,7 +38,7 @@ Ship a learning-grade, production-pattern recommendation stack that:
 |-----------|-------------|
 | **Cost-first, learning-grade** | Serverless where it fits (Lambda FAISS, Glue, Step Functions); scale-to-zero mindset; destroy between sessions |
 | **Migration-friendly** | Same Docker image and Python code locally and on AWS — **environment variables only**, never business-logic forks |
-| **SageMaker-centric ML** | User-tower + CatBoost inference on SageMaker Endpoints (A/B, canary, Model Monitor) |
+| **SageMaker-centric ML** | User-tower + XGBoost inference on SageMaker Endpoints (A/B, canary, Model Monitor) |
 | **FAISS over managed vector DB** | Lambda + S3-backed index; OpenSearch/Pinecone documented as scale-up paths |
 | **S3 as data lake** | No DynamoDB; Redis is cache only, not system of record |
 | **Production patterns, dev sample scale** | Architecture matches full H&M scale; deployed on ~1K stratified users (articles and transactions derived from sampled users) |
@@ -71,9 +71,11 @@ Ship a learning-grade, production-pattern recommendation stack that:
 | Batch ETL | **AWS Glue** (PySpark) | Same code as `local[*]`; nightly/weekly jobs |
 | General orchestration | **Step Functions** | Data + feature pipeline DAG |
 | ML orchestration | **SageMaker Pipelines** | Train → evaluate → register → embed → FAISS build → canary |
+| Experiment tracking | **AWS Managed MLflow** | Track Optuna trials, parameters, metrics, and artifacts |
+| Hyperparameter tuning | **Optuna** | SQLite on EBS for study persistence |
 | Scheduling | **EventBridge** | Cron: weekly ETL, daily Redis warm-up, daily pre-warm |
-| ML training | **SageMaker Training Jobs** | Two-Tower + CatBoost; `ml.m5.large` spot |
-| ML inference | **SageMaker Endpoints** | `two-tower-user-tower`, `catboost-ranker`; `ml.t3.medium` |
+| ML training | **SageMaker Training Jobs** | Two-Tower + XGBoost; `ml.m5.large` spot |
+| ML inference | **SageMaker Endpoints** | `two-tower-user-tower`, `xgboost-ranker`; `ml.t3.medium` |
 | Model governance | **SageMaker Model Registry** | Approval-gated promotion |
 | Vector search | **Lambda** (container) | FAISS top-100; 2 GB; index from S3 |
 | Application | **ECS Fargate** | Unified FastAPI monolith; 0.5 vCPU / 1.0 GB; desired count 1 (scale 1–4) |
@@ -141,18 +143,21 @@ ElastiCache Redis (hot path only)
 ```
 s3://fashion-reco-{env}/
 ├── raw/ | clean/ | features/ | models/ | embeddings/ | indices/
+├── mlflow/     (MLflow artifact root)
 ├── enriched/   (reserved)
 └── events/     (reserved — v1.1)
 ```
 
 **Redis** — `cache.t3.micro`; keys include `reco:{cid}`, `user:{cid}:features`, `seen:{cid}`, `active:users:top6`, `prewarm:done:{cid}:{date}`, etc. (full map: v1 HLD §10.3).
 
+**EBS Volume** — Attached to an EC2 instance or accessed via Lambda/Fargate for persistent SQLite database used by Optuna for hyperparameter optimization studies.
+
 ### 4. ML Serving Infrastructure
 
 | Component | Hosting | Sizing / notes |
 |-----------|---------|----------------|
 | Two-Tower user-tower | SageMaker Endpoint | `ml.t3.medium`; variant weights for canary |
-| CatBoost ranker | SageMaker Endpoint | `ml.t3.medium`; batch per request |
+| XGBoost ranker | SageMaker Endpoint | `ml.t3.medium`; batch per request |
 | FAISS ANN | Lambda container | 2 GB; index in S3 `indices/faiss_items/version={vN}.index`; version via `FAISS_INDEX_VERSION` env |
 | Item embeddings (offline) | SageMaker Batch Transform | Feeds index-build Lambda |
 
@@ -172,7 +177,7 @@ Browser → CloudFront → API Gateway → VPC Link → Cloud Map → ECS Fargat
     ↔ ElastiCache Redis
     → SageMaker (user-tower)
     → Lambda (FAISS) → S3 (index read at cold start)
-    → SageMaker (CatBoost)
+    → SageMaker (XGBoost)
 ```
 
 Circuit breakers (`pybreaker`) on each downstream; fallbacks documented in v1 HLD §9.8.
@@ -244,10 +249,12 @@ First three user-picker cards show **pre-warmed** badge (~15 ms); last three are
 | Two-Tower training | Docker + PyTorch / SM SDK `local` | SageMaker Training Job | User/item embeddings |
 | Two-Tower inference (online) | Local server | SageMaker Endpoint `two-tower-user-tower` | User embedding at request time |
 | Item embeddings (offline) | Local script | SageMaker Batch Transform | Feed FAISS build |
+| Hyperparameter tuning (HPO) | Local Optuna + SQLite | Optuna + SQLite on EBS | Find best model parameters |
+| Experiment tracking | Local MLflow server | AWS Managed MLflow | Track metrics, parameters, and artifacts |
 | FAISS index build | Local script | Lambda (ML pipeline step) | Build `.index` → S3 |
 | FAISS search | Local FAISS | Lambda + FAISS | Top-100 candidates |
-| CatBoost training | Local CatBoost | SageMaker Training Job | Ranking model |
-| CatBoost inference | Local server | SageMaker Endpoint `catboost-ranker` | Re-rank candidates |
+| XGBoost training | Local XGBoost | SageMaker Training Job | Ranking model |
+| XGBoost inference | Local server | SageMaker Endpoint `xgboost-ranker` | Re-rank candidates |
 | API + 5-stage pipeline | `uvicorn` in Docker | **ECS Fargate** (same image) | Orchestrate Cache→…→Order |
 | Cache pre-warm | Local SQS (LocalStack) + script | Producer/consumer Lambdas + SQS | Overnight `reco:{cid}` for top 3 users |
 | Feature / result caching | Local Redis | ElastiCache Redis | Hot path |
@@ -292,6 +299,8 @@ First three user-picker cards show **pre-warmed** badge (~15 ms); last three are
 | boto3 | `endpoint_url` for LocalStack | IAM role — no `endpoint_url` |
 | ML training | SageMaker SDK `instance_type='local'` | `ml.m5.large` spot |
 | ML inference | Local model server | SageMaker Endpoints |
+| Experiment tracking | Local MLflow server | AWS Managed MLflow |
+| Hyperparameter tuning | Local Optuna SQLite | Optuna SQLite on EBS |
 | Vector search | Local `.index` file | Lambda + S3-backed index |
 | **Application** | **`uvicorn` in Docker Compose** | **ECS Fargate** (same image) |
 | **Ingress** | Direct `localhost:8000` | API Gateway → VPC Link → Cloud Map |
@@ -328,7 +337,7 @@ S3_BUCKET          = os.getenv("S3_BUCKET", "local-dev-bucket")
 REDIS_HOST         = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT         = int(os.getenv("REDIS_PORT", "6379"))
 SM_USER_TOWER      = os.getenv("SAGEMAKER_USER_TOWER_ENDPOINT", "http://localhost:8080/user")
-SM_CATBOOST        = os.getenv("SAGEMAKER_CATBOOST_ENDPOINT", "http://localhost:8080/rank")
+SM_XGBOOST        = os.getenv("SAGEMAKER_XGBOOST_ENDPOINT", "http://localhost:8080/rank")
 FAISS_LAMBDA       = os.getenv("FAISS_LAMBDA_NAME", "faiss-search-local")
 FAISS_INDEX_VERSION = os.getenv("FAISS_INDEX_VERSION", "v1")
 ENV                = os.getenv("ENV", "local")

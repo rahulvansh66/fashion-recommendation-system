@@ -128,7 +128,7 @@ If most products have short descriptions but some are very long (right-skewed):
   from scipy.stats import boxcox
   products['boxcox_desc_length'], lambda_param = boxcox(products['detail_desc_length'] + 1)
   ```
-- **Model impact**: Tree-based models (CatBoost) handle skewness well, but neural networks (Two-Tower) benefit from transformation
+- **Model impact**: Tree-based models (XGBoost) handle skewness well, but neural networks (Two-Tower) benefit from transformation
 - **Why**: Prevents the model from being dominated by extreme values
 
 #### Bimodal Distribution
@@ -248,7 +248,7 @@ You'll need normalization for:
    - Item features: `detail_desc_length`, `price`, `product_age`
    - User features: `avg_transaction_value`, `total_purchases`, `days_since_last_purchase`
    
-2. **CatBoost Ranking Model**:
+2. **XGBoost Ranking Model**:
    - Less critical (tree-based models are scale-invariant)
    - But still helps with convergence speed
 
@@ -275,7 +275,7 @@ products[products['detail_desc_length'] < 10]
 - ✅ They represent real product variation (luxury vs. basic items)
 - ✅ Your model needs to make predictions for similar extreme cases
 - ✅ They correlate with important business outcomes (long descriptions → higher engagement?)
-- ✅ Tree-based models in your pipeline (CatBoost handles outliers well)
+- ✅ Tree-based models in your pipeline (XGBoost handles outliers well)
 
 #### When Outliers Are Noise (REMOVE/CAP)
 
@@ -367,7 +367,7 @@ products_clean['is_outlier_desc'] = (
 
 # 4. Let the model choose what works best
 # - Two-Tower: Use normalized version
-# - CatBoost: Can use raw or log-transformed
+# - XGBoost: Can use raw or log-transformed
 # - Both: Can use outlier indicator as additional feature
 ```
 
@@ -384,7 +384,7 @@ products_clean['is_outlier_desc'] = (
 
 2. **Normalization** → Makes neural networks learn efficiently from all features equally
    - Critical for Two-Tower model (neural network)
-   - Less critical for CatBoost (tree-based)
+   - Less critical for XGBoost (tree-based)
    - Prevents features with large numeric ranges from dominating
 
 3. **Outliers** → Investigate first, then use robust techniques that preserve signal while reducing noise

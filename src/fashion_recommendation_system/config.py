@@ -20,7 +20,7 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 # --- ML inference endpoints (local defaults for dev) ---
 TWO_TOWER_ENDPOINT = os.getenv("TWO_TOWER_ENDPOINT", "http://localhost:8080")
-CATBOOST_ENDPOINT = os.getenv("CATBOOST_ENDPOINT", "http://localhost:8081")
+XGBOOST_ENDPOINT = os.getenv("XGBOOST_ENDPOINT", "http://localhost:8081")
 FAISS_LAMBDA_ARN = os.getenv("FAISS_LAMBDA_ARN", "")
 
 # --- Experiment tracking & HPO ---

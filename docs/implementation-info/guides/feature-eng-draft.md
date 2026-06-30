@@ -1,4 +1,4 @@
-create notebook for feature engineering to capture trend, seasonality, recency and other features that you find useful to train/experiment with catboost and lightgbm as ranker model.
+create notebook for feature engineering to capture trend, seasonality, recency and other features that you find useful to train/experiment with xgboost and lightgbm as ranker model.
 
 here are some of my suggestions, you can sugget more features :
 

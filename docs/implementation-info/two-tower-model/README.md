@@ -6,6 +6,8 @@ Stage-1 retrieval (dual-encoder) training and experiment runbook.
 |----------|-------------|
 | [`two-tower-retrieval-training-guide.md`](./two-tower-retrieval-training-guide.md) | Model semantics — features, architecture, loss, hyperparameters, evaluation |
 | [`two-tower-retrieval-implementation-guide.md`](./two-tower-retrieval-implementation-guide.md) | Repo implementation — code layout, pipelines, SageMaker, MLflow/Optuna, runbook |
+| [`../../superpowers/specs/2026-06-12-two-tower-tensorflow-to-pytorch-design.md`](../../superpowers/specs/2026-06-12-two-tower-tensorflow-to-pytorch-design.md) | Approved migration spec — TensorFlow → PyTorch + HLD restructure |
+| [`../../superpowers/plans/2026-06-12-two-tower-tensorflow-to-pytorch.md`](../../superpowers/plans/2026-06-12-two-tower-tensorflow-to-pytorch.md) | Step-by-step implementation plan |
 
 **Related (other folders):**
 

@@ -71,7 +71,7 @@ fashion-recommendation-system/
 │   │   ├── user_features.py                    # Purchase aggregates; optionally includes tag features if enriched/ exists
 │   │   ├── item_features.py                    # Popularity scores, category stats; optionally includes article tags
 │   │   ├── interaction_features.py             # User-item interaction matrix
-│   │   └── ranking_features.py                 # CatBoost candidate feature assembly (user × item)
+│   │   └── ranking_features.py                 # XGBoost candidate feature assembly (user × item)
 │   │
 │   ├── retrieval/                              # CORE: Stage 1 — Candidate retrieval
 │   │   ├── __init__.py
@@ -89,9 +89,9 @@ fashion-recommendation-system/
 │   │
 │   ├── ranking/                                # CORE: Stage 2 — Re-ranking
 │   │   ├── __init__.py
-│   │   └── catboost/
+│   │   └── xgboost/
 │   │       ├── __init__.py
-│   │       ├── model.py                        # CatBoostClassifier wrapper
+│   │       ├── model.py                        # XGBoostClassifier wrapper
 │   │       ├── train.py                        # SageMaker Training Job entry point
 │   │       ├── inference.py                    # SageMaker inference handler
 │   │       └── feature_builder.py              # Assemble candidate feature matrix at inference time
@@ -109,7 +109,7 @@ fashion-recommendation-system/
 │       │   ├── __init__.py
 │       │   ├── main.py                         # FastAPI app definition (zero Lambda-specific code; LWA handles Lambda integration)
 │       │   ├── routers/
-│       │   │   ├── recommendations.py          # GET /recommendations/{user_id}  — Two-Tower + CatBoost pipeline
+│       │   │   ├── recommendations.py          # GET /recommendations/{user_id}  — Two-Tower + XGBoost pipeline
 │       │   │   ├── chat.py                     # POST /chat  — RAG chatbot (future)
 │       │   │   └── health.py                   # GET /health
 │       │   └── services/
@@ -125,7 +125,7 @@ fashion-recommendation-system/
 │   │                                           # Core steps (always run in this order):
 │   ├── run_data_pipeline.py                    # Step 1: Ingestion + preprocessing end-to-end
 │   ├── run_feature_pipeline.py                 # Step 2: Feature engineering (depends on step 1)
-│   ├── run_training_pipeline.py                # Step 3: Train two-tower + CatBoost (depends on step 2)
+│   ├── run_training_pipeline.py                # Step 3: Train two-tower + XGBoost (depends on step 2)
 │   ├── run_index_pipeline.py                   # Step 4: Build recommendation FAISS index + upload to S3
 │   │                                           # Optional (run before step 2 to enrich features):
 │   ├── run_content_features.py                 # Optional: LLM batch inference → enriched/ in S3
@@ -137,7 +137,7 @@ fashion-recommendation-system/
 │   ├── 02_eda_transactions.ipynb
 │   ├── 03_feature_analysis.ipynb
 │   ├── 04_two_tower_experiments.ipynb
-│   └── 05_catboost_experiments.ipynb
+│   └── 05_xgboost_experiments.ipynb
 │
 ├── terraform/                                  # Infrastructure as Code
 │   ├── main.tf
@@ -165,7 +165,7 @@ fashion-recommendation-system/
 │   │   ├── test_content_features.py            # Tag extractor + user tag aggregator
 │   │   ├── test_feature_pipeline.py
 │   │   ├── test_two_tower.py
-│   │   ├── test_catboost.py
+│   │   ├── test_xgboost.py
 │   │   └── test_api.py
 │   ├── integration/
 │   │   ├── test_faiss_search.py
@@ -195,7 +195,7 @@ fashion-recommendation-system/
 ├── .env.local                                  # Local dev env vars (gitignored)
 ├── .env.example                                # Template — safe to commit
 ├── pyproject.toml                              # Packaging, tool config (black, ruff, mypy, pytest)
-├── requirements-training.txt                  # torch, catboost, pyspark, sagemaker-sdk (~2GB)
+├── requirements-training.txt                  # torch, xgboost, pyspark, sagemaker-sdk (~2GB)
 ├── requirements-content.txt                   # transformers, peft, datasets, accelerate (~5GB)
 ├── requirements-serving.txt                   # fastapi, uvicorn, redis, boto3, faiss-cpu (~50MB; no mangum needed)
 ├── requirements-dev.txt                       # pytest, black, ruff, mypy, localstack
@@ -235,7 +235,7 @@ s3://bucket/
 ├── models/                     ← SageMaker Training Jobs write here
 │   ├── two_tower/
 │   │   └── model.tar.gz
-│   ├── catboost/
+│   ├── xgboost/
 │   │   └── model.tar.gz
 │   └── content_features/            # fine-tuned tag extraction model  (optional)
 │       └── model.tar.gz
@@ -255,7 +255,7 @@ s3://bucket/
 | `content_features/batch_inference/user_tag_aggregator.py` | `enriched/article_tags.parquet` + `processed/transactions_clean.parquet` |
 | `feature_pipeline/` | `s3://bucket/processed/` (always) + `s3://bucket/enriched/` (when content_features enabled) |
 | `retrieval/two_tower/train.py` | `s3://bucket/features/` |
-| `ranking/catboost/train.py` | `s3://bucket/features/ranking_features.parquet` |
+| `ranking/xgboost/train.py` | `s3://bucket/features/ranking_features.parquet` |
 | `retrieval/faiss/builder.py` | Item embeddings from two-tower inference |
 | `generation/rag/ingestion.py` | `s3://bucket/processed/articles_clean.parquet` (direct — bypasses feature_pipeline) |
 | `serving/api/routers/recommendations.py` | Redis (hot features) + `indices/faiss_items.index` + SageMaker endpoints |
@@ -269,7 +269,7 @@ Lambda cold start time and package size are directly linked. PyTorch alone is ~7
 
 | File | Contents | Used By |
 |------|----------|---------|
-| `requirements-training.txt` | torch, catboost, pyspark, sagemaker-sdk | `retrieval/two_tower/`, `ranking/catboost/`, `feature_pipeline/` |
+| `requirements-training.txt` | torch, xgboost, pyspark, sagemaker-sdk | `retrieval/two_tower/`, `ranking/xgboost/`, `feature_pipeline/` |
 | `requirements-content.txt` | transformers, peft, datasets, accelerate | `content_features/` only — ~5GB, must stay isolated |
 | `requirements-serving.txt` | fastapi, uvicorn, redis, boto3, faiss-cpu, httpx | Lambda (API + FAISS), local API server |
 | `requirements-dev.txt` | pytest, black, ruff, mypy, moto, localstack | Local development and CI only |
@@ -332,7 +332,7 @@ Both involve LLMs but are entirely different in purpose, timing, and placement i
 | | `content_features/` | `generation/rag/` |
 |--|--------------------|--------------------|
 | **Purpose** | Extract structured style tags from article text → features for user profile | Answer user natural language queries about products via a chatbot panel |
-| **Relation to recommendations** | Optional enrichment — feeds Two-Tower + CatBoost as richer input features | Completely independent — shares no code or data flow with recommendation pipeline |
+| **Relation to recommendations** | Optional enrichment — feeds Two-Tower + XGBoost as richer input features | Completely independent — shares no code or data flow with recommendation pipeline |
 | **When it runs** | Offline batch, periodically (e.g. weekly cron) | Online, per chat message |
 | **Trigger** | `pipelines/run_content_features.py` | `POST /chat` API call |
 | **Output** | `s3://bucket/enriched/user_tag_features.parquet` → consumed by `feature_pipeline/` | Natural language answer or product list returned to chatbot UI |
@@ -346,7 +346,7 @@ Both involve LLMs but are entirely different in purpose, timing, and placement i
 
 **User-facing behaviour:** A chatbot panel alongside the product feed. The user can ask natural language questions — "show me something casual for summer" or "what's good for a wedding?". The chatbot searches a vector index of all product descriptions, retrieves the most relevant chunks, and passes them to an LLM to generate a grounded answer or product list.
 
-**This is separate from recommendations.** The Two-Tower + CatBoost system recommends items based on purchase history (collaborative signal). The RAG chatbot answers queries based on product content (semantic signal). They serve different user intents and run on different request paths.
+**This is separate from recommendations.** The Two-Tower + XGBoost system recommends items based on purchase history (collaborative signal). The RAG chatbot answers queries based on product content (semantic signal). They serve different user intents and run on different request paths.
 
 **Two FAISS indices — never conflated:**
 
@@ -374,7 +374,7 @@ Both involve LLMs but are entirely different in purpose, timing, and placement i
 # Core recommendation pipeline (run in order)
 data-pipeline:        # Step 1: raw → clean
 feature-pipeline:     # Step 2: clean → model-ready features
-train:                # Step 3: train two-tower + CatBoost
+train:                # Step 3: train two-tower + XGBoost
 build-index:          # Step 4: build recommendation FAISS index and upload to S3
 
 # Optional enrichment (run before feature-pipeline to enable tag features)

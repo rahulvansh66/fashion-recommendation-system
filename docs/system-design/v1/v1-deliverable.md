@@ -35,17 +35,17 @@ Here's the complete v1 deliverable, organized by layer. After v1 ships, you'll h
 | Stage 0 — Cache check | Redis `reco:{customer_id}` GET, 12-h TTL |
 | Stage 1 — Retrieve | User feature fetch (Redis → S3 fallback) → SageMaker user-tower endpoint → FAISS Lambda |
 | Stage 2 — Filter | Redis `seen:{customer_id}` set; cold-start fallback to `popular:items:top100` |
-| Stage 3 — Rank | Bulk item-feature read → SageMaker CatBoost endpoint |
+| Stage 3 — Rank | Bulk item-feature read → SageMaker XGBoost endpoint |
 | Stage 4 — Order | Categorical + price-bucket diversity reorder (positions 1–4 raw, 5–6 diverse, 7–10 raw) |
 | Cache write | Redis SETEX 12 h |
-| Circuit breakers | `pybreaker` on Redis / user-tower / FAISS / CatBoost with documented fallbacks for each |
+| Circuit breakers | `pybreaker` on Redis / user-tower / FAISS / XGBoost with documented fallbacks for each |
 
 ## 4. ML inference (managed)
 
 | Item | Detail |
 |---|---|
 | SageMaker endpoint — Two-Tower user-tower | `ml.t3.medium`, 256-dim embedding output; retrieves top-100 candidates |
-| SageMaker endpoint — CatBoost ranker | `ml.t3.medium`, batch-scored `P(buy soon)` per (customer, candidate) pair; sorted to top-10 after filter + diversity reorder |
+| SageMaker endpoint — XGBoost ranker | `ml.t3.medium`, batch-scored `P(buy soon)` per (customer, candidate) pair; sorted to top-10 after filter + diversity reorder |
 | FAISS Lambda | 2 GB memory, S3-backed `.index` file, top-100 retrieval |
 | Production-variant scaffolding | Canary / A/B configurable on both endpoints |
 | Model Monitor | Data-quality and model-drift baseline configured; offline drift reference slices Jul–Sep 2020 (monitoring only) |
@@ -66,7 +66,7 @@ Here's the complete v1 deliverable, organized by layer. After v1 ships, you'll h
 | EventBridge cron | Triggers Step Functions on schedule (data + features weekly; cache warm-up daily 03:00 UTC; cache pre-warm daily 05:00 UTC) |
 | Step Functions — data + feature pipeline | Orchestrates Glue jobs end-to-end |
 | AWS Glue (PySpark) | Clean, feature-engineer (users, items, interactions), build popular-items keys, populate Redis, write `active:users:top6` list with `{customer_id, age, prewarmed}` entries (drives both user-picker cards and pre-warm; `current_date` is added by the frontend at render time) |
-| SageMaker Pipelines — ML pipeline | Build ranking tables (1:5 window-aware negatives) → Two-Tower training → CatBoost training → eval on val/test → FAISS index build → Model Registry registration |
+| SageMaker Pipelines — ML pipeline | Build ranking tables (1:5 window-aware negatives) → Two-Tower training → XGBoost training → eval on val/test → FAISS index build → Model Registry registration |
 | Temporal splits (offline) | **Train** `t_dat <= 2020-03-31` · **Val** `2020-04-01`–`2020-05-15` · **Test** `2020-05-16`–`2020-06-30` · **Drift** Jul–Sep 2020 (monitor only) |
 | Pipeline promotion gate (test) | `recall@100 > baseline` **and** ranker `AUC-PR > baseline` **and** `hit_rate@10 > baseline` |
 | SageMaker Training Jobs | On `ml.m5.large` spot (weekly) |
@@ -129,7 +129,7 @@ Here's the complete v1 deliverable, organized by layer. After v1 ships, you'll h
 
 ## What you will **NOT** have after v1
 
-- **All of v1.1**: `POST /events`, Kinesis Firehose, SQS purchase queue, consumer Lambda, live cache invalidation, engagement features, CatBoost retraining on click signals
+- **All of v1.1**: `POST /events`, Kinesis Firehose, SQS purchase queue, consumer Lambda, live cache invalidation, engagement features, XGBoost retraining on click signals
 - **All of Section 17 (Future Enhancements)**: LLM tag extraction, RAG chatbot, embedding-cosine diversity (V2), online/streaming retrain, Cognito + JWT, private-subnet + VPC endpoints, multi-region, semantic caching, WAF managed rules, microservices decomposition, React/Vue/Svelte SPA
 
 ---

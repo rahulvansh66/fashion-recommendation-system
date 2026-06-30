@@ -1,8 +1,9 @@
+ pre and postprocessing in feature engineering
+ 
  things to fix:
 
- modfy and add sample in val and test in dummy
 
- data quiality before feature engineering
+- data quiality before feature engineering
 - A Glue PySpark job must derive user and item features from the `clean/` zone and write 
 
 
@@ -11,7 +12,7 @@
 
  , except following things will be different:
 - for ranker model 1 postive and 5 negative instead of 10
-- lightgbm used instead of catboost for ranker
+- lightgbm used instead of xgboost for ranker
 
 and dont add so much details in about Retrieval  and ranker in @docs/system-design/v1/v1-requirements.md
 

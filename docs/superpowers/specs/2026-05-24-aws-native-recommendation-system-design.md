@@ -189,7 +189,7 @@ Why similarity alone isn't enough:
 - **Business Logic:** Promote new arrivals, clear inventory
 
 **Ranking Model Approaches:**
-1. **Gradient Boosting (XGBoost/CatBoost)**
+1. **Gradient Boosting (XGBoost/XGBoost)**
    - ✅ Excellent with tabular features
    - ✅ Fast training and inference
    - ✅ Interpretable feature importance

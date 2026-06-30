@@ -5,7 +5,7 @@
 
 This guide is a companion to:
 - [`two-tower-retrieval-training-guide.md`](../two-tower-model/two-tower-retrieval-training-guide.md) — training the two towers
-- [`ranking-model-training-guide.md`](ranking-model-training-guide.md) — training the CatBoost ranker
+- [`ranking-model-training-guide.md`](ranking-model-training-guide.md) — training the XGBoost ranker
 
 ---
 
@@ -100,7 +100,7 @@ Request: { customer_id, transaction_date }
     ┌──────────────────────┐
     │  ranking_predictor    │  (Step 3: score and sort)
     └──────────────────────┘
-       - CatBoost.predict_proba → purchase probability per candidate
+       - XGBoost.predict_proba → purchase probability per candidate
        - Sort descending by score
        - Return top-N article IDs
 ```
@@ -159,9 +159,9 @@ For each surviving candidate, the transformer looks up:
 - Customer `age` (from the earlier lookup or passed through the payload)
 - `month_sin`, `month_cos` (carried from query_transformer output)
 
-This builds the **same feature schema used during ranking training** — ~100 rows × 14 columns — as a CatBoost `Pool`.
+This builds the **same feature schema used during ranking training** — ~100 rows × 14 columns — as a XGBoost `Pool`.
 
-### 3.4 Step 3 — CatBoost scoring (ranking_predictor)
+### 3.4 Step 3 — XGBoost scoring (ranking_predictor)
 
 **File:** `tmp/recsys/inference/ranking_predictor.py`
 
@@ -240,13 +240,13 @@ Training and offline evaluation of the retrieval model is done via `tfrs.metrics
 
 ### 5.2 Ranking evaluation
 
-The CatBoost ranker is evaluated as binary classification on the 10% held-out validation split:
+The XGBoost ranker is evaluated as binary classification on the 10% held-out validation split:
 
 | Metric | Library |
 |---|---|
 | Per-class precision, recall, F1 | `sklearn.metrics.classification_report` |
 | Binary precision, recall, F1 | `precision_recall_fscore_support(..., average="binary")` |
-| Feature importance | CatBoost `feature_importances_` sorted descending |
+| Feature importance | XGBoost `feature_importances_` sorted descending |
 
 **Example results from the reference notebook run (~224k ranking rows, 90/10 split):**
 
@@ -263,7 +263,7 @@ The CatBoost ranker is evaluated as binary classification on the 10% held-out va
 **Data split used:**
 | Split | Fraction | Use |
 |---|---|---|
-| Train | 90% | CatBoost training with early stopping on val |
+| Train | 90% | XGBoost training with early stopping on val |
 | Validation | 10% | Early stopping + post-hoc classification metrics |
 | Test | — | No separate held-out test set |
 
@@ -289,7 +289,7 @@ The CatBoost ranker is evaluated as binary classification on the 10% held-out va
 
 ## 7. Optional: LLM Ranker Path
 
-A GPT-4o-mini based ranker (`llm_ranking_predictor.py`) is available as an alternative to CatBoost. It uses the same feature set but prompts an LLM for a purchase probability. It is limited to **20 candidates per request** due to latency. This path is deployed separately (notebook 7) and used in the Streamlit demo via a flag.
+A GPT-4o-mini based ranker (`llm_ranking_predictor.py`) is available as an alternative to XGBoost. It uses the same feature set but prompts an LLM for a purchase probability. It is limited to **20 candidates per request** due to latency. This path is deployed separately (notebook 7) and used in the Streamlit demo via a flag.
 
 ---
 
@@ -302,7 +302,7 @@ A GPT-4o-mini based ranker (`llm_ranking_predictor.py`) is available as an alter
 | Query embedding (user tower at serving) | `tmp/recsys/inference/query_transformer.py` |
 | QueryTower SavedModel wrapper | `tmp/recsys/hopsworks_integration/two_tower_serving.py` |
 | ANN retrieval + feature assembly | `tmp/recsys/inference/ranking_transformer.py` |
-| CatBoost scoring | `tmp/recsys/inference/ranking_predictor.py` |
+| XGBoost scoring | `tmp/recsys/inference/ranking_predictor.py` |
 | LLM ranker (optional) | `tmp/recsys/inference/llm_ranking_predictor.py` |
 | Deployment notebook | `tmp/notebooks/5_ip_creating_deployments.ipynb` |
 | Streamlit UI | `tmp/recsys/ui/recommenders.py` |

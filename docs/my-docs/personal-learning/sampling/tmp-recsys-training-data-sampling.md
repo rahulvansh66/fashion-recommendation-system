@@ -1,12 +1,12 @@
 # Reference Implementation: Training Data Sampling (`tmp/recsys`)
 
-This guide documents how the reference code under `tmp/recsys` and its notebooks reduce training data from the full H&M dataset (~31.7M transactions) for two-tower retrieval and CatBoost ranking. Sampling happens **mostly once** in the feature notebook; the training notebooks inherit that subset.
+This guide documents how the reference code under `tmp/recsys` and its notebooks reduce training data from the full H&M dataset (~31.7M transactions) for two-tower retrieval and XGBoost ranking. Sampling happens **mostly once** in the feature notebook; the training notebooks inherit that subset.
 
 **Source notebooks:**
 
 - `tmp/notebooks/1_fp_computing_features.ipynb` — customer sampling + ranking dataset construction
 - `tmp/notebooks/2_tp_training_retrieval_model.ipynb` — two-tower training
-- `tmp/notebooks/3_tp_training_ranking_model.ipynb` — CatBoost ranking training
+- `tmp/notebooks/3_tp_training_ranking_model.ipynb` — XGBoost ranking training
 
 **Key code:**
 
@@ -30,7 +30,7 @@ flowchart TD
     E --> G["Hopsworks split<br/>80/10/10 → ~16K train"]
     F --> H["Hopsworks split<br/>90/10 → ~202K train rows"]
     G --> I["Two-Tower training<br/>in-batch negatives"]
-    H --> J["CatBoost training<br/>scale_pos_weight=10"]
+    H --> J["XGBoost training<br/>scale_pos_weight=10"]
 ```
 
 ---
@@ -78,7 +78,7 @@ Controlled by `settings.CUSTOMER_DATA_SIZE` (default `SMALL` in `tmp/recsys/conf
 - **Articles are not sampled** — all 105,542 articles are loaded and uploaded. Only transactions shrink.
 - After customer feature cleaning (`drop_na_age`), positives drop slightly: **20,376** purchase rows (from 23,799).
 
-There is **no second transaction-level subsample** inside the two-tower or CatBoost training code.
+There is **no second transaction-level subsample** inside the two-tower or XGBoost training code.
 
 ---
 
@@ -125,7 +125,7 @@ Retrieval training cost scales with **positive purchase rows × batching**, not 
 
 ---
 
-## 3. CatBoost (ranking) — notebook 3
+## 3. XGBoost (ranking) — notebook 3
 
 Ranking data is built in notebook 1 by `compute_ranking_dataset()`, still on the customer-sampled transactions.
 
@@ -155,14 +155,14 @@ From the notebook run:
 
 Negatives are **independently sampled** columns (article, customer, age are not joined consistently), with fixed seeds 2/3/4. Article pool is **unique articles in the sampled transaction set**, not the full catalog.
 
-### CatBoost train/val split
+### XGBoost train/val split
 
 Notebook 3 uses Hopsworks `train_test_split` with `RANKING_DATASET_VALIDATON_SPLIT_SIZE = 0.1`:
 
 - ~202K train rows
 - ~22K val rows
 
-CatBoost itself has no row subsampling; class imbalance is handled via config:
+XGBoost itself has no row subsampling; class imbalance is handled via config:
 
 | Setting | Value |
 |---------|-------|
@@ -182,8 +182,8 @@ CatBoost itself has no row subsampling; class imbalance is handled via config:
 | Random transaction subsampling | No — only customer sampling |
 | Time-based train/test split | No — Hopsworks random splits |
 | Article catalog subsampling | No — full articles uploaded; models see transaction-linked subset |
-| Interaction synthetic data for two-tower/CatBoost | No — `generate_interaction_data()` exists but two-tower and ranking train on **purchases**, not synthetic clicks/ignores |
-| CatBoost row cap beyond upstream sampling | No |
+| Interaction synthetic data for two-tower/XGBoost | No — `generate_interaction_data()` exists but two-tower and ranking train on **purchases**, not synthetic clicks/ignores |
+| XGBoost row cap beyond upstream sampling | No |
 
 ---
 
@@ -194,7 +194,7 @@ CatBoost itself has no row subsampling; class imbalance is handled via config:
 | Model | Training rows | Negative strategy |
 |-------|---------------|-------------------|
 | **Two-Tower** | ~16K positive purchase rows | In-batch contrastive negatives (batch size 2048) |
-| **CatBoost** | ~224K rows (20K pos + 204K neg) | 10× random negatives per positive; `scale_pos_weight=10` |
+| **XGBoost** | ~224K rows (20K pos + 204K neg) | 10× random negatives per positive; `scale_pos_weight=10` |
 
 To train closer to full scale, raise `CUSTOMER_DATA_SIZE` to `MEDIUM` or `LARGE`, or replace `DatasetSampler` with a different strategy. The training notebooks do not re-read the full 31M-row CSV — they only see whatever was materialized into the feature store in notebook 1.
 

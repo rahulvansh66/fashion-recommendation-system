@@ -49,7 +49,7 @@ A fully functional, end-to-end fashion recommendation system that:
 ### 1.2 V1 Scope
 
 **In scope:**
-- Two-stage ML pipeline: Two-Tower retrieval + CatBoost ranking, with Filter and Diversity Order stages
+- Two-stage ML pipeline: Two-Tower retrieval + XGBoost ranking, with Filter and Diversity Order stages
 - Real-time online serving with a 12-hour Redis result cache
 - Frontend and Backend combined in single ECS Fargate service (FastAPI + Jinja2 + HTMX)
 - ML inference, data lake, batch pipelines, CI/CD, and observability
@@ -72,7 +72,7 @@ A fully functional, end-to-end fashion recommendation system that:
 
 ### 2.1 What the System Does
 
-The system serves a personalized **top-10** list of fashion articles each customer is **likely to purchase soon**, based on past purchase history and precomputed features. Offline, **“soon”** is defined by purchases in future label windows (val/test splits in [`v1-requirements.md`](./v1-requirements.md) FR-BATCH-02); online, the ranker scores purchase likelihood as of a feature-cutoff date. The request path runs through five ordered stages: **Cache → Retrieve → Filter → Rank → Order**. Offline batch pipelines train the models, build feature stores, and produce vector indices on a weekly cadence.
+The system serves a personalized **top-10** list of fashion articles each customer is **likely to purchase soon**, based on past purchase history and precomputed features. Offline, **“soon”** is defined by purchases in future label windows (val/test splits in [`v1-requirements.md`](./v1-requirements.md) FR-BATCH-02); online, the ranker scores purchase likelihood using precomputed features and request-time context (`current_date`). The request path runs through five ordered stages: **Cache → Retrieve → Filter → Rank → Order**. Offline batch pipelines train the models, build feature stores, and produce vector indices on a weekly cadence.
 
 ### 2.2 Key Architectural Decisions
 
@@ -81,12 +81,13 @@ The system serves a personalized **top-10** list of fashion articles each custom
 | Serving model | Real-time per request + 12-hour Redis result cache | Acceptable freshness for fashion recommendations; cuts SageMaker invocations ~95% on re-visiting users |
 | Pipeline shape | Cache → Retrieve → Filter → Rank → Order (diversity) | Production-realistic 4-stage funnel + cache; matches the Spotify/Pinterest pattern |
 | Vector search | Lambda + FAISS (S3-backed `.index` file) | Pay-per-request, sub-millisecond warm latency, fits 10 GB Lambda memory limit |
-| ML inference | SageMaker Endpoints (user-tower + CatBoost) | Native A/B testing, canary deployment, drift monitoring out of the box |
+| ML inference | SageMaker Endpoints (user-tower + XGBoost) | Native A/B testing, canary deployment, drift monitoring out of the box |
 | Frontend + Backend | FastAPI + Jinja2 + HTMX + Tailwind on **ECS Fargate** (unified service) | Production-grade pattern for server-rendered apps; HTMX gives modern partial-update UX without an SPA build pipeline; eliminates inter-service network hops |
 | Ingress | API Gateway HTTP API + VPC Link + Cloud Map (no ALB) | Saves ~$16/mo vs. ALB; Cloud Map service discovery suits low-traffic Fargate |
 | Data lake | S3 only (no DynamoDB) | Eliminates per-read costs; user history kept in S3 + Redis |
 | Cache | ElastiCache Redis | Result cache (12 h TTL) + hot user/item features + token bucket for rate limiting |
 | Batch processing | AWS Glue (PySpark) | Same code as `local[*]`; serverless; no cluster operations |
+| Experiment tracking & HPO | AWS Managed MLflow & Optuna | Track experiments with MLflow; Optuna uses SQLite on EBS for study persistence (allows easy export/import to local MLflow) |
 | Orchestration | Step Functions (general) + SageMaker Pipelines (ML) + EventBridge (cron) | Native AWS, free, fits serverless theme |
 | IaC | Terraform | One-command apply/destroy for cost control |
 
@@ -159,7 +160,7 @@ flowchart TB
     subgraph mlLayer [ML Inference]
         userTower["SageMaker Endpoint\ntwo-tower user-tower\nml.t3.medium"]
         faissLambda["Lambda\nFAISS search\n2 GB memory"]
-        catboost["SageMaker Endpoint\nCatBoost ranker\nml.t3.medium"]
+        xgboost["SageMaker Endpoint\nXGBoost ranker\nml.t3.medium"]
     end
 
     subgraph dataLayer [Data Stores]
@@ -190,12 +191,12 @@ flowchart TB
     fargate <--> redis
     fargate --> userTower
     fargate --> faissLambda
-    fargate --> catboost
+    fargate --> xgboost
     faissLambda --> s3
 
     eventBridge --> stepFn --> glue --> s3
     stepFn --> smPipeline --> smTraining --> smRegistry --> userTower
-    smRegistry --> catboost
+    smRegistry --> xgboost
     glue --> redis
 
     warmEb --> warmProducer
@@ -205,7 +206,7 @@ flowchart TB
     warmQueue -. failed 3x .-> warmDlq
     warmConsumer --> userTower
     warmConsumer --> faissLambda
-    warmConsumer --> catboost
+    warmConsumer --> xgboost
     warmConsumer -->|SETEX reco:cid 43200| redis
 ```
 
@@ -355,7 +356,7 @@ flowchart TB
 
     stage1["Stage 1 — Retrieve\nfeature fetch + user-tower + FAISS"]
     stage2["Stage 2 — Filter\ndrop seen items"]
-    stage3["Stage 3 — Rank\nCatBoost endpoint"]
+    stage3["Stage 3 — Rank\nXGBoost endpoint"]
     stage4["Stage 4 — Order\ndiversity reorder"]
     cacheWrite["Redis SETEX 12h"]
     returnFresh[Return top-10]
@@ -408,17 +409,17 @@ Three sub-steps in order:
 
 - Build feature vectors for remaining candidates: user features + item features + cross features (preferred category vs. item category, price affinity vs. item price, days since last purchase in category).
 - Item features fetched in bulk: `HMGET item:{id1}:features ... item:{idN}:features` — single round-trip, sub-2 ms.
-- Invoke SageMaker Endpoint `catboost-ranker` with the batch of feature vectors.
+- Invoke SageMaker Endpoint `xgboost-ranker` with the batch of feature vectors.
 - Returns scored candidates sorted by predicted purchase probability.
 
 ### 9.6 Stage 4 — Order (Diversity-Aware Reorder)
 
-CatBoost output is not the final order. The reorder rule:
+XGBoost output is not the final order. The reorder rule:
 
 ```
-positions 1–4   = top 4 items by raw CatBoost score
+positions 1–4   = top 4 items by raw XGBoost score
 positions 5–6   = top 2 items by diversity_score vs. positions 1–4
-positions 7–10  = next 4 items by raw CatBoost score (excluding 5–6)
+positions 7–10  = next 4 items by raw XGBoost score (excluding 5–6)
 ```
 
 **Diversity score formula:**
@@ -448,7 +449,7 @@ Where:
 | Stage 1: FAISS Lambda invoke (warm) | 5 ms | 15 ms |
 | Stage 2: filter (Redis SMEMBERS) | 2 ms | 5 ms |
 | Stage 3: item features bulk read | 2 ms | 5 ms |
-| Stage 3: SageMaker CatBoost invoke | 25 ms | 70 ms |
+| Stage 3: SageMaker XGBoost invoke | 25 ms | 70 ms |
 | Stage 4: diversity reorder | 1 ms | 2 ms |
 | Cache write + serialize response | 2 ms | 4 ms |
 | **Total — cache miss, all warm** | **~75 ms** | **~200 ms** |
@@ -464,7 +465,7 @@ Each downstream call is wrapped in a `pybreaker` circuit breaker (5 failures wit
 | Redis (cache or feature read) | Skip cache, continue with pipeline; emit CloudWatch alarm |
 | SageMaker user-tower endpoint | Use Redis-cached embedding for this user (24 h TTL from last successful call). If absent, skip to popular items. |
 | FAISS Lambda | Use `popular:items:by_category` cache (refreshed nightly) |
-| SageMaker CatBoost endpoint | Return FAISS top-K ordered by raw similarity score, still apply diversity reorder |
+| SageMaker XGBoost endpoint | Return FAISS top-K ordered by raw similarity score, still apply diversity reorder |
 | All ML downstreams open | Return `popular:items:top100` from Redis with `degraded=true` flag in response |
 
 Every fallback emits a `recommendation.fallback.{component}` CloudWatch metric from the Fargate application, wired to an SNS alarm.
@@ -491,7 +492,9 @@ s3://fashion-reco-{env}/
 │   └── interactions/year=YYYY/month=MM/
 ├── models/                       # Model artifacts (also in SageMaker Model Registry)
 │   ├── two_tower/version={vN}/
-│   └── catboost/version={vN}/
+│   └── xgboost/version={vN}/
+├── mlflow/                       # MLflow artifacts
+│   └── artifacts/
 ├── embeddings/                   # Item embeddings (256-dim) for FAISS index build
 │   └── items/version={vN}/
 ├── indices/                      # FAISS indices loaded by the FAISS Lambda
@@ -548,7 +551,7 @@ s3://fashion-reco-{env}/
 | Framework | PyTorch |
 | Architecture | Two MLP towers (user, item), final layer projects to 256-dim shared embedding space |
 | Loss | Sampled-softmax / contrastive (in-batch negatives) |
-| Training data | Purchases with `t_dat <= 2020-03-31`, joined with user/item features (feature cutoff §11.4) |
+| Training data | Purchases with `t_dat <= 2020-03-31`, joined with user/item features (§11.4) |
 | Eval | `recall@100` on val/test label-window purchases (§11.4) |
 | Training compute | SageMaker Training Job, `ml.m5.large` spot, ~30 min on dev sample |
 | Output artifacts | `user_tower.pt`, `item_tower.pt` |
@@ -571,33 +574,40 @@ Detail: [`two-tower-retrieval-training-guide.md`](../../implementation-info/two-
 
 **Zero-downtime index swap:** The FAISS Lambda reads `FAISS_INDEX_VERSION` env var. A new index is uploaded to S3 with a new version tag; the env var is updated via Terraform. Existing warm containers continue serving the old version (~15 min); new containers serve the new version. Rolling deploy with no downtime.
 
-### 11.3 CatBoost Ranking Model
+### 11.3 XGBoost Ranking Model
 
 | Aspect | Choice |
 |---|---|
-| Framework | CatBoost |
+| Framework | XGBoost |
 | Task | Binary pair classification: `P(customer buys article soon)` |
 | Features | User features + item features + cross features (see [`features-eng.md`](../../implementation-info/guides/features-eng.md)) |
-| Labels | Positives = purchases in split label window; **5 window-aware negatives per positive** (`seen` exclusion before feature cutoff); `scale_pos_weight = 5` |
+| Labels | Positives = purchases in split label window; **10 window-aware negatives per positive** (`seen` exclusion); `scale_pos_weight = 10` |
 | Loss | Logloss (binary classification) |
 | Training compute | SageMaker Training Job, `ml.m5.large`, ~15 min on dev sample |
-| Serving | SageMaker Endpoint `catboost-ranker`, `ml.t3.medium`, batched per request |
-| Output artifact | `catboost_model.cbm` |
+| Serving | SageMaker Endpoint `xgboost-ranker`, `ml.t3.medium`, batched per request |
+| Output artifact | `xgboost_model.cbm` |
 
 Detail: [`ranking-model-training-guide.md`](../../implementation-info/guides/ranking-model-training-guide.md).
 
 ### 11.4 Temporal Splits & Evaluation (offline)
 
-Shared across feature engineering, retrieval, and ranker training ([`v1-requirements.md`](./v1-requirements.md) FR-BATCH-02):
+Shared across feature engineering, retrieval, and ranker training ([`v1-requirements.md`](./v1-requirements.md) FR-BATCH-02) — **snap-date + 7-day forward label window**:
 
-| Split | `t_dat` range | Role |
-|---|---|---|
-| Train | start → **2020-03-31** | Model training |
-| Val | **2020-04-01** → **2020-05-15** | Tuning / early stopping |
-| Test | **2020-05-16** → **2020-06-30** | Final acceptance |
-| Drift 1–3 | **2020-07-01** → **2020-09-30** | Model Monitor only |
+| Snap date | Role | Feature cutoff (`t_dat <=`) | Label window (`t_dat` range) |
+|-----------|------|------------------------------|------------------------------|
+| `2020-03-24` | **Train 0** | 2020-03-24 | 2020-03-25 – 2020-03-31 |
+| `2020-03-31` | **Train 1** | 2020-03-31 | 2020-04-01 – 2020-04-07 |
+| `2020-04-07` | **Train 2** | 2020-04-07 | 2020-04-08 – 2020-04-14 |
+| `2020-04-14` | **Val 1** | 2020-04-14 | 2020-04-15 – 2020-04-21 |
+| `2020-04-28` | **Val 2** | 2020-04-28 | 2020-04-29 – 2020-05-05 |
+| `2020-05-15` | **Test** | 2020-05-15 | 2020-05-16 – 2020-05-22 |
+| `2020-05-31` | **Drift 1** | 2020-05-31 | 2020-06-01 – 2020-06-07 |
+| `2020-06-30` | **Drift 2** | 2020-06-30 | 2020-07-01 – 2020-07-07 |
+| `2020-07-31` | **Drift 3** | 2020-07-31 | 2020-08-01 – 2020-08-07 |
+| `2020-08-31` | **Drift 4** | 2020-08-31 | 2020-09-01 – 2020-09-07 |
+| `2020-09-15` | **Drift 5** | 2020-09-15 | 2020-09-16 – 2020-09-22 |
 
-**Feature cutoffs:** train/val `2020-03-31`; test `2020-05-15`. No feature may use transactions after the cutoff for that split.
+**Split roles:** Train snaps (Mar 31, Apr 7) feed `fit()`; Val snaps (Apr 14, Apr 28) drive early stopping and HPO; Test snap (May 15) is the single acceptance gate; Drift snaps (D1–D5) are score-only monitoring points — plot metrics over time to observe decay.
 
 **Pipeline promotion gate (test set):** `recall@100 > baseline` (retrieval) **and** ranker `AUC-PR > baseline` **and** `hit_rate@10 > baseline` (any test-window purchase in served top-10 per user).
 
@@ -631,7 +641,7 @@ flowchart TB
 | Step | Action |
 |---|---|
 | Glue job 1 — data prep | Reads `raw/*.csv`, validates schema, deduplicates, writes `clean/*` parquet partitioned by month |
-| Glue job 2 — feature engineering | Builds user/item features per temporal cutoffs (§11.4); writes to `features/`; builds ranker training tables with 1:5 window-aware negatives |
+| Glue job 2 — feature engineering | Builds user/item features per temporal split (§11.4); writes to `features/`; builds ranker training tables with 1:10 window-aware negatives |
 | Glue job 3 — cache warm-up | Writes popular items, per-category top items, per-user seen sets, and `active:users:top6` Redis list directly into Redis |
 | SageMaker Pipeline trigger | Fires asynchronously in parallel with Glue job 3 |
 
@@ -642,7 +652,7 @@ flowchart TB
     pipelineStart[Triggered by Step Functions]
     train1[SageMaker Processing\nbuild training tables]
     train2[SageMaker Training\ntwo-tower model]
-    train3[SageMaker Training\ncatboost model]
+    train3[SageMaker Training\nxgboost model]
     eval[SageMaker Processing\nevaluate on holdout]
     cond{"recall@100 > baseline\nand AUC-PR > baseline\nand hit_rate@10 > baseline?"}
     register[RegisterModel\nSageMaker Model Registry]
@@ -673,7 +683,7 @@ flowchart LR
     dlq[SQS DLQ\nretention 14 days]
     consumer["Lambda prewarm-consumer\n1024 MB / 60 s\nreserved concurrency 5"]
     redis[(ElastiCache Redis)]
-    sm["SageMaker user-tower\n+ FAISS Lambda\n+ CatBoost"]
+    sm["SageMaker user-tower\n+ FAISS Lambda\n+ XGBoost"]
 
     eb --> producer
     producer -->|LRANGE active:users:top6 0 2| redis
@@ -737,7 +747,7 @@ def handler(event):
 | 2 | **Rate Limiting** | (a) API Gateway stage throttling 60 RPS / burst 100. (b) Per-`customer_id` token bucket in Redis via FastAPI middleware, 30 req/min. |
 | 3 | **Caching** | Result cache (Redis 12 h), feature cache (Redis 1–24 h), popular items (Redis daily), edge (CloudFront 1 h). Full map in Section 10.4. |
 | 4 | **Message Queues** | SQS Standard queue + DLQ for nightly cache pre-warming. Idempotent consumer. Synchronous request path stays queue-free. |
-| 5 | **Circuit Breakers** | `pybreaker` on every downstream (Redis, user-tower, FAISS, CatBoost). Per-stage fallback table in Section 9.8. |
+| 5 | **Circuit Breakers** | `pybreaker` on every downstream (Redis, user-tower, FAISS, XGBoost). Per-stage fallback table in Section 9.8. |
 | 6 | **Load Balancing** | API Gateway distributes to Fargate via VPC Link + Cloud Map; SageMaker multi-instance endpoints have built-in load balancing. |
 | 7 | **Auto Scaling** | See Section 13.4. SageMaker target tracking, ECS Service Auto Scaling based on CPU/memory. |
 
@@ -796,7 +806,7 @@ def handler(event):
 | Resource | Policy | Min | Max |
 |---|---|---|---|
 | SageMaker user-tower endpoint | Target tracking — 1000 invocations/min/instance | 1 × `ml.t3.medium` | 4 |
-| SageMaker CatBoost endpoint | Target tracking — 1000 invocations/min/instance | 1 × `ml.t3.medium` | 4 |
+| SageMaker XGBoost endpoint | Target tracking — 1000 invocations/min/instance | 1 × `ml.t3.medium` | 4 |
 | FAISS Lambda | Reserved concurrency cap | 0 | 50 |
 | Pre-warm consumer Lambda | SQS event source + reserved concurrency | 0 | 5 |
 | ECS Fargate (app) | Target tracking — CPU 70% or memory 80% | 1 task | 4 tasks |
@@ -895,7 +905,7 @@ All figures are monthly, USD, us-east-1, on-demand pricing as of 2026.
 | Lambda — pre-warm consumer | ~90 invocations × 250 ms × 1024 MB | < $0.01 |
 | SQS — pre-warm queue + DLQ | ~90 messages/mo (under free tier) | $0 |
 | **SageMaker user-tower endpoint** | 1 × `ml.t3.medium`, 730 h | **~$50** |
-| **SageMaker CatBoost endpoint** | 1 × `ml.t3.medium`, 730 h | **~$50** |
+| **SageMaker XGBoost endpoint** | 1 × `ml.t3.medium`, 730 h | **~$50** |
 | ElastiCache Redis | `cache.t3.micro`, 730 h | ~$13 |
 | S3 | 50 MB dev sample + artifacts | ~$1 |
 | Glue jobs | 4 jobs × 5 min × 2 DPU × 4 weeks | ~$2 |
@@ -1031,6 +1041,8 @@ All figures are monthly, USD, us-east-1, on-demand pricing as of 2026.
 | ML training | SageMaker Training Jobs | Spot pricing, managed containers, native Model Registry hand-off |
 | ML inference | SageMaker Endpoints | A/B variants, canary, autoscaling, Model Monitor |
 | ML model governance | SageMaker Model Registry | Approval workflow, lineage, semantic versioning |
+| Experiment tracking | AWS Managed MLflow | Track Optuna trials, parameters, metrics, and artifacts |
+| Hyperparameter tuning | Optuna | Uses SQLite on EBS for study persistence (allows easy export/import to local MLflow) |
 | Vector search | Lambda + FAISS | Sub-ms warm latency; pay-per-request |
 | Application hosting | ECS Fargate (unified monolith) | Production-standard for containerized apps; no cold starts; consistent performance |
 | Application ingress | API Gateway HTTP API + VPC Link + Cloud Map | Cheaper than ALB; sufficient for v1 traffic |
@@ -1058,6 +1070,8 @@ All figures are monthly, USD, us-east-1, on-demand pricing as of 2026.
 | Spark | `master('local[*]')` | AWS Glue |
 | ML training | SageMaker SDK `instance_type='local'` | SageMaker Training Job |
 | ML inference | Local model server in container | SageMaker Endpoint |
+| Experiment tracking | Local MLflow server | AWS Managed MLflow |
+| Hyperparameter tuning | Local Optuna SQLite | Optuna SQLite on EBS |
 | Vector search | Local `.index` file in container | Lambda + S3-backed `.index` |
 | Application (frontend + backend) | `uvicorn` in Docker | ECS Fargate + ALB |
 | Workflow | Local Python orchestration | Step Functions + SageMaker Pipelines |

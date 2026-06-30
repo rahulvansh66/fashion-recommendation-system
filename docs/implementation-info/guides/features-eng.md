@@ -8,28 +8,28 @@ Features for the data pipeline to capture **trend**, **seasonality**, **recency*
 
 ### Temporal splits and feature cutoffs
 
-All offline pipelines share the same date partitions ([`v1-requirements.md`](../../system-design/v1/v1-requirements.md) FR-BATCH-02):
+All offline pipelines share the same snap-date schedule ([`v1-requirements.md`](../../system-design/v1/v1-requirements.md) FR-BATCH-02).
+Each snap defines a **feature cutoff** (`t_dat <= snap_date`) and a **7-day forward label window**.
 
-| Split | `t_dat` range | Role |
-|-------|---------------|------|
-| **Train** | start → **2020-03-31** | Model training |
-| **Val** | **2020-04-01** → **2020-05-15** | Tuning / early stopping |
-| **Test** | **2020-05-16** → **2020-06-30** | Final acceptance |
-| **Drift 1–3** | **2020-07-01** → **2020-09-30** | Model Monitor only |
+| Snap date | Role | Feature cutoff (`t_dat <=`) | Label window (`t_dat` range) |
+|-----------|------|------------------------------|------------------------------|
+| `2020-03-24` | **Train 0** | 2020-03-24 | 2020-03-25 – 2020-03-31 |
+| `2020-03-31` | **Train 1** | 2020-03-31 | 2020-04-01 – 2020-04-07 |
+| `2020-04-07` | **Train 2** | 2020-04-07 | 2020-04-08 – 2020-04-14 |
+| `2020-04-14` | **Val 1** | 2020-04-14 | 2020-04-15 – 2020-04-21 |
+| `2020-04-28` | **Val 2** | 2020-04-28 | 2020-04-29 – 2020-05-05 |
+| `2020-05-15` | **Test** | 2020-05-15 | 2020-05-16 – 2020-05-22 |
+| `2020-05-31` | **Drift 1** | 2020-05-31 | 2020-06-01 – 2020-06-07 |
+| `2020-06-30` | **Drift 2** | 2020-06-30 | 2020-07-01 – 2020-07-07 |
+| `2020-07-31` | **Drift 3** | 2020-07-31 | 2020-08-01 – 2020-08-07 |
+| `2020-08-31` | **Drift 4** | 2020-08-31 | 2020-09-01 – 2020-09-07 |
+| `2020-09-15` | **Drift 5** | 2020-09-15 | 2020-09-16 – 2020-09-22 |
 
-**Feature cutoff** — inclusive end of transaction history used to compute every feature in this guide. No row with `t_dat > cutoff` may contribute to features for that split.
+`cutoff` in the feature tables below always means `snap_date` for the snap being built — never a post-cutoff label date.
 
-| Split | Feature cutoff (`cutoff`) |
-|-------|---------------------------|
-| Train | `2020-03-31` |
-| Val | `2020-03-31` |
-| Test | `2020-05-15` |
-
-**Ranker labels (separate from features):** positives are purchases in the split's **label window** (train dates for train; val/test dates for val/test). Negatives are **5 window-aware** non-purchases per positive (`seen` exclusion before `cutoff`). Detail: [`ranking-model-training-guide.md`](./ranking-model-training-guide.md).
+**Ranker labels (separate from features):** positives are `(customer_id, article_id)` purchases with `t_dat` in the snap's label window; negatives are **10 window-aware** non-purchases per positive (`seen` exclusion before `snap_date`). Detail: [`ranking-model-training-guide.md`](./ranking-model-training-guide.md).
 
 **Online inference:** user and item features are served from precomputed `features/` artifacts; `txn_month_sin` / `txn_month_cos` use the request `current_date` (not a historical cutoff).
-
-`cutoff` in the tables below always means the **feature cutoff for the split being built** — never a post-cutoff label date.
 
 
 | Topic                  | Rule                                                                                                                                                                                                                              |
@@ -60,7 +60,7 @@ w = 2^(-days_ago / 180) = exp(-ln(2) × days_ago / 180)
 
 ## Item features
 
-Popularity and demand signals at the item and category level.
+Popularity, demand, price, recency, and channel signals at the item and category level.
 
 
 | Feature                                  | Purpose                              | Formula                                                                                                                              | Look back                  |
@@ -70,19 +70,23 @@ Popularity and demand signals at the item and category level.
 | `item_category_pop_30d`                  | Recent popularity of item's category | `COUNT(*)` of purchases where `garment_group_name` = candidate item's category and `t_dat ∈ [cutoff - 30d, cutoff]`                  | 30 days                    |
 | `item_pop_180d`                          | Stable demand                        | `COUNT(*)` of purchases where `article_id` = candidate item and `t_dat ∈ [cutoff - 180d, cutoff]`                                    | 6 months (180 days)        |
 | `item_category_pop_180d`                 | Stable popularity of item's category | `COUNT(*)` of purchases where `garment_group_name` = candidate item's category and `t_dat ∈ [cutoff - 180d, cutoff]`                 | 6 months (180 days)        |
-| `item_pop_same_month_last_year`          | Seasonality                          | `COUNT(*)` of purchases where `article_id` = candidate item and `t_dat` falls in the same calendar month as `cutoff`, one year prior | Previous year (same month) |
+| `item_pop_same_month_last_year`          | Seasonality baseline                 | `COUNT(*)` of purchases where `article_id` = candidate item and `t_dat` falls in the same full calendar month as `cutoff`, one year prior; full-month window gives a stable denominator for `item_seasonality_strength` | Previous year (same calendar month) |
 | `first_sold_date`                        | First observed sale date             | `MIN(t_dat)` over purchases where `article_id` = candidate item and `t_dat <= cutoff`                                                | All history (through cutoff) |
 | `days_since_first_sold`                  | Catalog freshness / item maturity    | `cutoff - first_sold_date`; null when the item has no purchases before cutoff                                                      | All history (through cutoff) |
 | `item_recent_to_lifetime_ratio`          | Item trend strength                  | `item_pop_30d / (item_category_pop_180d + 1)`                                                                                        | 30d vs 180d                |
 | `item_category_recent_to_lifetime_ratio` | Category trend strength              | `item_category_pop_30d / (item_category_pop_180d + 1)`                                                                               | 30d vs 180d                |
-| `item_seasonality_strength`              | Seasonality strength                 | `item_pop_7d / (item_pop_same_month_last_year + 1)`                                                                                  | 7d vs same month last year |
+| `item_seasonality_strength`              | Seasonality strength                 | `item_pop_7d / (item_pop_same_month_last_year + 1)` — 7-day numerator vs full prior-month denominator; month window absorbs weekly noise | 7d (numerator) vs same calendar month last year (denominator) |
+| `item_avg_price`                         | Absolute price level of the item     | `AVG(price)` over all purchases where `article_id` = candidate item and `t_dat <= cutoff`; exposed to XGBoost directly to allow price × `age` interactions | All history (through cutoff) |
+| `item_days_since_last_sold`              | Recent sales momentum                | `cutoff - MAX(t_dat)` over purchases where `article_id` = candidate item and `t_dat <= cutoff`; null when never sold — captures whether the SKU is still moving | All history (through cutoff) |
+| `item_sales_channel_2_count`             | Channel 2 demand count               | `COUNT(*)` of purchases where `article_id` = candidate item, `sales_channel_id = 2`, and `t_dat <= cutoff` | All history (through cutoff) |
+| `item_sales_channel_2_share`             | Normalised channel mix               | `item_sales_channel_2_count / (item_pop_180d + 1)` — share of stable 180-day demand coming from channel 2 | All history vs 180d denominator |
 
 
 ---
 
 ## User features
 
-User-level behavior, preferences, and recency.
+User-level behavior, preferences, recency, and demographics.
 
 
 | Feature                         | Purpose                                                          | Formula                                                                                      | Look back                    |
@@ -97,6 +101,7 @@ User-level behavior, preferences, and recency.
 | `user_purchase_count_180d`      | Stable purchase frequency                                        | `COUNT(*)` of user purchases where `t_dat ∈ [cutoff - 180d, cutoff]`                         | 6 months (180 days)          |
 | `user_decayed_price_avg`        | Recent price preference (recent purchases weighted more)         | `Σ (price × w) / Σ w` over all user purchases where `t_dat <= cutoff`                        | Decayed (half-life 180d)     |
 | `user_decayed_price_std`        | Spread of user's recent price preference; used for price z-score | `sqrt( Σ (w × (price - user_decayed_price_avg)²) / Σ w )`; use `max(std, 1e-6)` if near zero | Decayed (half-life 180d)     |
+| `age`                           | Customer demographic for price × age interactions                | `age` column from `customers` table joined on `customer_id`; pass-through (not aggregated)   | Static                       |
 
 
 ---
@@ -105,6 +110,7 @@ User-level behavior, preferences, and recency.
 
 Cross features between a user and the candidate item.
 
+### Lifetime and decayed
 
 | Feature                               | Purpose                                                                                    | Formula                                                                                | Look back                            |
 | ------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------ |
@@ -113,6 +119,43 @@ Cross features between a user and the candidate item.
 | `user_item_decayed_interaction_ratio` | Personal vs global demand — user recently re-buys this item relative to overall popularity | `user_item_decayed_repurchase / (item_pop_180d + 1)`                                   | Decayed (half-life 180d) + item 180d |
 | `user_item_price_decayed_zscore`      | How candidate item price fits user's recent budget (positive = above typical spend)        | `(candidate_price - user_decayed_price_avg) / user_decayed_price_std`                  | Decayed (half-life 180d)             |
 
+### Windowed repurchase and pair recency
+
+`user_item_repurchase` is a lifetime count — a user may have bought the item years ago but not recently. These hard-window variants and the pair recency feature capture short-term repeat intent. Do **not** add decayed variants on top of these window counts (see conventions).
+
+| Feature                              | Purpose                                                                | Formula                                                                                                                                   | Look back              |
+| ------------------------------------ | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `user_item_repurchase_30d`           | Short-term repeat purchase of this SKU                                 | `COUNT(*)` of user purchases where `article_id` = candidate item and `t_dat ∈ [cutoff - 30d, cutoff]`                                     | 30 days                |
+| `user_item_repurchase_90d`           | Medium-term repeat purchase                                            | `COUNT(*)` of user purchases where `article_id` = candidate item and `t_dat ∈ [cutoff - 90d, cutoff]`                                     | 90 days                |
+| `user_item_repurchase_365d`          | Annual window; complements decay without duplicating it                | `COUNT(*)` of user purchases where `article_id` = candidate item and `t_dat ∈ [cutoff - 365d, cutoff]`                                    | 1 year                 |
+| `user_item_days_since_last_purchase` | Pair recency — last time this user bought this article                 | `cutoff - MAX(t_dat)` over user purchases where `article_id` = candidate item and `t_dat <= cutoff`; null when never purchased             | All history            |
+| `user_item_sales_channel_2_count`    | How many times user bought this item via channel 2                     | `COUNT(*)` of user purchases where `article_id` = candidate item, `sales_channel_id = 2`, and `t_dat <= cutoff`                           | All history            |
+
+
+---
+
+## User–category features
+
+Cross features between a user and the **candidate item's `garment_group_name` category**.
+These complement `user_category_pref_1y_rank1/2/3` (which tell *which* categories the user prefers) by quantifying *how much* they buy in the candidate item's category and how recently.
+
+| Feature                                      | Purpose                                                                                            | Formula                                                                                                                                                       | Look back              |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `user_purchases_in_candidate_category_1y`    | Purchase volume in candidate's category over the last year                                         | `COUNT(*)` of user purchases where `garment_group_name` = candidate item's category and `t_dat ∈ [cutoff - 365d, cutoff]`                                     | 1 year                 |
+| `user_days_since_last_purchase_in_category`  | Recency within candidate's category                                                                | `cutoff - MAX(t_dat)` over user purchases where `garment_group_name` = candidate item's category and `t_dat <= cutoff`; null when never purchased in category | All history            |
+| `user_category_match_rank1`                  | Binary — candidate item's category is the user's top-1 preferred category                         | `1` if candidate `garment_group_name` = `user_category_pref_1y_rank1`, else `0`                                                                               | 1-year pref lookup     |
+| `user_category_match_rank2`                  | Binary — candidate item's category is the user's top-2 preferred category                         | `1` if candidate `garment_group_name` = `user_category_pref_1y_rank2`, else `0`                                                                               | 1-year pref lookup     |
+| `user_category_match_rank3`                  | Binary — candidate item's category is the user's top-3 preferred category                         | `1` if candidate `garment_group_name` = `user_category_pref_1y_rank3`, else `0`                                                                               | 1-year pref lookup     |
+
+---
+
+## Catalog pass-through attributes
+
+Article metadata joined directly from the `articles` table — not aggregated from transactions. Passed to XGBoost as native categorical inputs.
+
+| Feature             | Purpose                                                             | Source                      | Type        |
+| ------------------- | ------------------------------------------------------------------- | --------------------------- | ----------- |
+| `product_type_name` | Finer-grained product taxonomy below `garment_group_name`           | `articles.product_type_name`| categorical |
 
 ---
 

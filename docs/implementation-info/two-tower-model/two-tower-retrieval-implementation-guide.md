@@ -19,7 +19,7 @@
 
 Stage-1 **two-tower retrieval** training with:
 
-- TensorFlow + TensorFlow Recommenders dual-encoder model
+- PyTorch dual-encoder model (`nn.Module` towers)
 - **Log-q popularity correction** for in-batch negative debiasing
 - **FR-BATCH-02** temporal train / val / test splits (not random 10/10)
 - **AWS Managed MLflow** experiment tracking (metrics logged from pipeline scripts)
@@ -34,12 +34,12 @@ Feature Parquet (transactions/)
         ▼
 Temporal split + stage to S3  ──►  train.parquet / val.parquet / test.parquet
         │
-        ├─► pipelines/training/two_tower/train.py  (single job, MLflow logging)
+        ├─► src/.../two_tower/train.py  (single job, MLflow logging)
         │
         └─► pipelines/hpo/run_two_tower_study.py
                  │  (Optuna on RDS; 1 SageMaker Training Job per trial)
                  ▼
-            AWS Managed MLflow  +  query/candidate SavedModels
+            AWS Managed MLflow  +  query/candidate PyTorch checkpoints
 ```
 
 ---
@@ -48,10 +48,10 @@ Temporal split + stage to S3  ──►  train.parquet / val.parquet / test.parq
 
 | Path | Responsibility |
 |------|----------------|
-| `src/fashion_recommendation_system/models/retrieval/two_tower/` | Model code (towers, loss, datasets, trainer) — **source of truth** |
-| `pipelines/training/two_tower/train.py` | CLI / SageMaker entrypoint; MLflow logging; artifact export |
+| `src/fashion_recommendation_system/models/retrieval/two_tower/` | Model code — **source of truth** (see module map below) |
+| `src/.../two_tower/train.py` | CLI / SageMaker entrypoint; MLflow logging; artifact export |
 | `pipelines/hpo/run_two_tower_study.py` | Optuna study; launches child Training Jobs |
-| `pipelines/sagemaker/launch_training_job.py` | TensorFlow Estimator wrapper |
+| `pipelines/sagemaker/launch_training_job.py` | PyTorch Estimator wrapper |
 | `pipelines/sagemaker/hpo_processing_job.py` | Launches Processing job running the HPO script |
 | `configs/models/two_tower.yaml` | Frozen defaults + temporal split + SageMaker/Optuna settings |
 | `configs/hpo/two_tower_search_space.yaml` | Optuna search space |
@@ -72,7 +72,7 @@ Both exist; **only the pipeline is required** for experiments.
 
 | Layer | Required? | Trains model? | Logs to MLflow? |
 |-------|-----------|---------------|-----------------|
-| `pipelines/training/two_tower/train.py` | Yes (core) | Yes | Yes |
+| `src/.../two_tower/train.py` | Yes (core) | Yes | Yes |
 | `pipelines/hpo/run_two_tower_study.py` | For HPO | Orchestrates jobs | Yes (parent + nested trials) |
 | `notebooks/two_tower_retrieval_experiments.ipynb` | No | No (calls pipelines) | Reads runs only |
 
@@ -129,16 +129,15 @@ Validation is enforced in `split.load_transactions()` and `notebooks/utils/two_t
 
 ### 4.3 Temporal split (FR-BATCH-02)
 
-Implemented in `src/.../two_tower/split.py`:
+Implemented in `src/.../two_tower/split.py`. The **snap-date + 7-day forward label window** scheme:
 
-| Split | Rule on `t_dat` |
-|-------|-----------------|
-| Train | `<= 2020-03-31` |
-| Val | `2020-04-01` → `2020-05-15` |
-| Test | `2020-05-16` → `2020-06-30` |
+| Role | Snap dates | Rows selected |
+|------|------------|---------------|
+| **Train** | `2020-03-31`, `2020-04-07` | `t_dat` in either train snap's label window; stacked |
+| **Val** | `2020-04-14`, `2020-04-28` | `t_dat` in either val snap's label window; stacked |
+| **Test** | `2020-05-15` | `t_dat` in `[2020-05-16, 2020-05-22]` |
 
-Dates are configured in `configs/models/two_tower.yaml` under `temporal_split`.
-
+Snap dates and label windows are configured in `configs/models/two_tower.yaml` under `temporal_split`.
 ### 4.4 Staged splits for SageMaker
 
 Before Training Jobs, write split Parquet to:
@@ -163,29 +162,32 @@ Conceptual architecture matches [`two-tower-retrieval-training-guide.md`](./two-
 
 | File | Contents |
 |------|----------|
-| `towers.py` | `QueryTower`, `ItemTower` |
-| `popularity.py` | `build_label_probs_table()` — P(article) from train counts |
-| `model.py` | `TwoTowerModel` — custom `train_step`, `test_step`, `evaluate_dataset` |
-| `dataset.py` | `tf.data` builders, FactorizedTopK candidate corpus |
-| `split.py` | Pandas load + temporal split (no TensorFlow import) |
-| `trainer.py` | `build_model()`, `train_model()`, `recall_at_100()` |
+| `model.py` | `QueryTower`, `ItemTower` (`nn.Module`) |
+| `loss.py` | `build_article_prob_map()`, `popularity_corrected_loss()` |
+| `preprocess.py` | Vocab maps, age z-score, batch encoding |
+| `dataset.py` | PyTorch `Dataset` / `DataLoader` builders |
+| `evaluate.py` | Recall@K over factorized candidate corpus |
+| `export.py` | Checkpoint save/load (`.pt` + JSON) |
+| `train.py` | SageMaker CLI entrypoint |
+| `inference.py` | SageMaker handler stub (`model_fn`, `predict_fn`) |
+| `split.py` | Pandas load + temporal split (no torch import) |
 
-### 5.2 Query tower (`towers.py`)
+### 5.2 Query tower (`model.py`)
 
 ```
-customer_id → StringLookup → Embedding(emb_dim)
-age         → Normalization (adapt on train)
+customer_id → Vocabulary index → nn.Embedding(emb_dim)
+age         → z-score (train mean/std)
 txn_month_sin, txn_month_cos → pass-through
-→ concat → Dense(relu) → Dense → 16-d vector
+→ concat → Linear(relu) → Linear → 16-d vector
 ```
 
-### 5.3 Candidate tower (`towers.py`)
+### 5.3 Candidate tower (`model.py`)
 
 ```
-article_id      → StringLookup → Embedding(emb_dim)
-item_category   → StringLookup → one_hot
-index_group_name → StringLookup → one_hot
-→ concat → Dense(relu) → Dense → 16-d vector
+article_id      → Vocabulary index → nn.Embedding(emb_dim)
+item_category   → Vocabulary index → F.one_hot
+index_group_name → Vocabulary index → F.one_hot
+→ concat → Linear(relu) → Linear → 16-d vector
 ```
 
 ### 5.4 Loss and sampling
@@ -198,19 +200,19 @@ See training guide §3 for the conceptual explanation.
 
 ### 5.5 Popularity correction (training only)
 
-From `tmp/recsys-v2/two-tower-cg/custom_cross_entropy_loss.py`, implemented in `model.py`:
+From `tmp/recsys-v2/two-tower-cg/custom_cross_entropy_loss.py`, implemented in `loss.py`:
 
-1. Precompute `P(article_id) = count / N_train` → `StaticHashTable` keyed by StringLookup indices.
-2. In `train_step`, compute logits `L = U @ Vᵀ` (batch × batch).
+1. Precompute `P(article_id) = count / N_train` → dict keyed by embedding index.
+2. In training step, compute logits `L = U @ Vᵀ` (batch × batch).
 3. Subtract `log P(item_j)` from column `j` (item `j` in the batch).
 4. Apply in-batch softmax CE with diagonal labels `0..batch_size-1`.
 
-**Eval / test steps do not apply log-q correction** — they use standard `tfrs.tasks.Retrieval` + `FactorizedTopK`.
+**Eval / test do not apply log-q correction** — standard dot-product scoring in `evaluate.py`.
 
 ### 5.6 Evaluation
 
 - Corpus: deduplicated train articles through the candidate tower once per epoch.
-- Headline metric: **`val_recall_at_100`** (= `top_100_categorical_accuracy` from FactorizedTopK).
+- Headline metric: **`val_recall_at_100`** from `evaluate.recall_at_100()`.
 - Optional: when `--test-uri` is passed in train mode, `train.py` also logs `test_recall_at_100` after training (informational; not used for Optuna).
 
 ### 5.7 Default hyperparameters
@@ -225,11 +227,11 @@ From `configs/models/two_tower.yaml` (same as training guide):
 | `learning_rate` | 0.01 |
 | `weight_decay` | 0.001 |
 
-Optimizer: `tf.keras.optimizers.AdamW`.
+Optimizer: `torch.optim.AdamW`.
 
 ---
 
-## 6. Training pipeline (`pipelines/training/two_tower/train.py`)
+## 6. Training pipeline (`src/.../two_tower/train.py`)
 
 ### 6.1 CLI flags
 
@@ -250,7 +252,7 @@ When `MLFLOW_TRACKING_URI` is set, each invocation:
 - Starts an MLflow run (`trial_{n}` or `two_tower_train`)
 - Tags: `git_sha`, `feature_snapshot`, `feature_cutoff`, `model=two_tower`, `data_env`
 - Logs params, per-epoch loss, `val_recall_at_100`, top-K metrics
-- Artifacts: `query_model/`, `candidate_model/`, `metrics.json`
+- Artifacts: `query_tower.pt`, `candidate_tower.pt`, `preprocess_state.json`, `metrics.json`
 
 ### 6.3 Local smoke run
 
@@ -258,7 +260,7 @@ When `MLFLOW_TRACKING_URI` is set, each invocation:
 # From repo root; install deps first:
 # pip install -r requirements-training.txt
 
-python pipelines/training/two_tower/train.py \
+python src/fashion_recommendation_system/models/retrieval/two_tower/train.py \
   --train-uri s3/experiments/two_tower/{run_id}/train.parquet \
   --val-uri s3/experiments/two_tower/{run_id}/val.parquet \
   --embedding-dim 16 --batch-size 512 --epochs 2
@@ -270,9 +272,9 @@ Set `MLFLOW_TRACKING_URI` in `.env.local` to log to AWS Managed MLflow.
 
 Launched via `pipelines/sagemaker/launch_training_job.py`:
 
-- Framework: TensorFlow 2.15, Python 3.11
+- Framework: PyTorch 2.3, Python 3.11
 - Instance: `ml.m5.large` (2 vCPU, 8 GiB) spot by default
-- `source_dir`: `pipelines/training/two_tower/`
+- `source_dir`: `src/fashion_recommendation_system/models/retrieval/two_tower/`
 - `dependencies`: `src/`, `configs/`
 
 Environment passed to the job: `MLFLOW_TRACKING_URI`, `MLFLOW_EXPERIMENT`, `GIT_SHA`, `FEATURE_SNAPSHOT`, `DATA_ENV`.
@@ -401,7 +403,7 @@ Parameter Store is **not** required for v1 dev.
 | File | Use |
 |------|-----|
 | `requirements-training.txt` | Training, HPO, SageMaker, MLflow, Optuna |
-| `pipelines/training/two_tower/requirements.txt` | Subset for SageMaker `source_dir` |
+| `src/.../two_tower/requirements.txt` | Subset for SageMaker `source_dir` |
 | `pyproject.toml` `[project.optional-dependencies.training]` | Editable install |
 
 Install:
@@ -420,7 +422,7 @@ Notebooks additionally need `requirements-notebooks.txt` (includes `python-doten
 | Test | File | Needs TensorFlow? |
 |------|------|-------------------|
 | Temporal split boundaries | `tests/unit/test_two_tower_splits.py` | No |
-| Popularity table probabilities | `tests/unit/test_two_tower_popularity.py` | Yes |
+| Popularity table probabilities | `tests/unit/test_two_tower_popularity.py` | No |
 
 ```bash
 pytest tests/unit/test_two_tower_splits.py -q
@@ -432,8 +434,8 @@ pytest tests/unit/test_two_tower_splits.py -q
 
 | Output | Location |
 |--------|----------|
-| Query tower SavedModel | MLflow artifact `query_model/` |
-| Candidate tower SavedModel | MLflow artifact `candidate_model/` |
+| Query tower checkpoint | MLflow artifact `query_tower.pt` |
+| Candidate tower checkpoint | MLflow artifact `candidate_tower.pt` |
 | Metrics JSON | `metrics.json` in run artifacts |
 | Best hyperparams | `configs/models/two_tower.yaml` (after HPO) |
 
@@ -455,7 +457,7 @@ See [`item-embeddings-and-inference-pipeline-guide.md`](../guides/item-embedding
 | MLflow run missing | `MLFLOW_TRACKING_URI` unset in job env | Pass env to Estimator / export before launch |
 | OOM on `ml.m5.large` | Batch 2048 too large for instance | Reduce `batch_size` or use `ml.m5.xlarge` |
 | Optuna study empty | Wrong `OPTUNA_STORAGE_URI` | Verify RDS connectivity and URI format |
-| Import error for `tensorflow` | Training venv not installed | `pip install -r requirements-training.txt` |
+| Import error for `torch` | Training venv not installed | `pip install -r requirements-training.txt` |
 
 ---
 

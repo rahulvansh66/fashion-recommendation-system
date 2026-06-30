@@ -76,7 +76,7 @@
         <mxCell id="stage1_faiss" parent="1" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#ED7100;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;verticalLabelPosition=bottom;verticalAlign=top;" value="Stage 1: ANN Search&#xa;Lambda (FAISS)&#xa;2 GB memory" vertex="1">
           <mxGeometry height="60" width="60" x="878" y="680" as="geometry" />
         </mxCell>
-        <mxCell id="stage3_catboost" parent="1" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#01A88D;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker;verticalLabelPosition=bottom;verticalAlign=top;" value="Stage 3: Rank&#xa;SageMaker Endpoint&#xa;CatBoost Ranker&#xa;(ml.t3.medium)" vertex="1">
+        <mxCell id="stage3_xgboost" parent="1" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#01A88D;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker;verticalLabelPosition=bottom;verticalAlign=top;" value="Stage 3: Rank&#xa;SageMaker Endpoint&#xa;XGBoost Ranker&#xa;(ml.t3.medium)" vertex="1">
           <mxGeometry height="60" width="60" x="1078" y="680" as="geometry" />
         </mxCell>
         <mxCell id="stage24_note" parent="1" style="text;html=1;strokeColor=#1565C0;fillColor=#E3F2FD;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=9;fontStyle=2;" value="Stage 2: Filter (seen-set, Redis SMEMBERS in Lambda)&#xa;Stage 4: Diversity Reorder (in-memory, in Lambda)" vertex="1">
@@ -109,7 +109,7 @@
         <mxCell id="op_sm_pipeline" parent="1" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#01A88D;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker;verticalLabelPosition=bottom;verticalAlign=top;" value="SageMaker Pipelines&#xa;ML Workflow&#xa;(Train → Eval → Register)" vertex="1">
           <mxGeometry height="60" width="60" x="678" y="1030" as="geometry" />
         </mxCell>
-        <mxCell id="op_sm_training" parent="1" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#01A88D;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker;verticalLabelPosition=bottom;verticalAlign=top;" value="SageMaker Training&#xa;Two-Tower + CatBoost&#xa;ml.m5.large (spot)" vertex="1">
+        <mxCell id="op_sm_training" parent="1" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#01A88D;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker;verticalLabelPosition=bottom;verticalAlign=top;" value="SageMaker Training&#xa;Two-Tower + XGBoost&#xa;ml.m5.large (spot)" vertex="1">
           <mxGeometry height="60" width="60" x="858" y="1030" as="geometry" />
         </mxCell>
         <mxCell id="op_sm_registry" parent="1" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#01A88D;labelBackgroundColor=#ffffff;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker;verticalLabelPosition=bottom;verticalAlign=top;" value="SageMaker Model&#xa;Registry&#xa;(Approval + Lineage)" vertex="1">
@@ -253,13 +253,13 @@
         <mxCell id="e14" edge="1" parent="1" source="stage1_sm" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;" target="stage1_faiss" value="256-dim embedding">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e15" edge="1" parent="1" source="stage1_faiss" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;" target="stage3_catboost" value="top-100 candidates">
+        <mxCell id="e15" edge="1" parent="1" source="stage1_faiss" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;" target="stage3_xgboost" value="top-100 candidates">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e16" edge="1" parent="1" source="stage1_faiss" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;dashed=1;" target="s3" value="load .index (cold start)">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e17" edge="1" parent="1" source="stage3_catboost" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;dashed=1;strokeColor=#1565C0;" target="redis" value="SETEX reco:{cid} 12h">
+        <mxCell id="e17" edge="1" parent="1" source="stage3_xgboost" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;dashed=1;strokeColor=#1565C0;" target="redis" value="SETEX reco:{cid} 12h">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e18" edge="1" parent="1" source="stage0_redis" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;" target="redis" value="">
@@ -292,7 +292,7 @@
         <mxCell id="e27" edge="1" parent="1" source="op_sm_registry" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;dashed=1;strokeColor=#01A88D;" target="stage1_sm" value="deploy canary 10%">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e28" edge="1" parent="1" source="op_sm_registry" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;dashed=1;strokeColor=#01A88D;" target="stage3_catboost" value="deploy canary 10%">
+        <mxCell id="e28" edge="1" parent="1" source="op_sm_registry" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;dashed=1;strokeColor=#01A88D;" target="stage3_xgboost" value="deploy canary 10%">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e29" edge="1" parent="1" source="pw_eb" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;" target="pw_producer" value="">

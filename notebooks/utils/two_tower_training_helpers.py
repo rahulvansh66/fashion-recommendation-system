@@ -11,15 +11,7 @@ from typing import Any
 import pandas as pd
 import yaml
 
-# Notebook helpers live under notebooks/utils; config_loader is in notebooks/
-import sys
-from pathlib import Path as _Path
-
-_NB_ROOT = _Path(__file__).resolve().parent.parent
-if str(_NB_ROOT) not in sys.path:
-    sys.path.insert(0, str(_NB_ROOT))
-
-from config_loader import find_repo_root
+from utils.config_loader import find_repo_root
 
 REQUIRED_COLUMNS = [
     "customer_id",
@@ -56,20 +48,43 @@ def verify_schema(df: pd.DataFrame) -> None:
         raise ValueError(f"Missing columns (extend FE first): {missing}")
 
 
-def apply_temporal_split(df: pd.DataFrame, temporal: dict[str, str]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """FR-BATCH-02 temporal split on ``t_dat``."""
+def apply_temporal_split(
+    df: pd.DataFrame,
+    temporal: dict,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """FR-BATCH-02 snap-date temporal split on ``t_dat``.
+
+    Each role (train / val / test) is defined by one or more snap dicts with
+    ``label_start`` and ``label_end`` keys.  Rows are selected when ``t_dat``
+    falls inside any snap's label window for that role.  Train rows from all
+    train snaps are stacked into a single DataFrame.
+
+    Args:
+        df: Transaction DataFrame with a ``t_dat`` column.
+        temporal: Dict loaded from ``configs/models/two_tower.yaml``
+                  ``temporal_split`` section.  Expected keys:
+                  ``train_snaps``, ``val_snaps``, ``test_snaps``.
+
+    Returns:
+        Tuple of (train_df, val_df, test_df).
+    """
     work = df.copy()
     work["t_dat"] = pd.to_datetime(work["t_dat"]).dt.normalize()
 
-    train_end = pd.Timestamp(temporal["train_end"])
-    val_start = pd.Timestamp(temporal["val_start"])
-    val_end = pd.Timestamp(temporal["val_end"])
-    test_start = pd.Timestamp(temporal["test_start"])
-    test_end = pd.Timestamp(temporal["test_end"])
+    def _collect(snaps: list) -> pd.DataFrame:
+        """Return rows whose t_dat falls in any snap's label window."""
+        if not snaps:
+            return work.iloc[0:0].copy()
+        mask = pd.Series(False, index=work.index)
+        for snap in snaps:
+            lo = pd.Timestamp(snap["label_start"])
+            hi = pd.Timestamp(snap["label_end"])
+            mask |= (work["t_dat"] >= lo) & (work["t_dat"] <= hi)
+        return work[mask].copy()
 
-    train_df = work[work["t_dat"] <= train_end]
-    val_df = work[(work["t_dat"] >= val_start) & (work["t_dat"] <= val_end)]
-    test_df = work[(work["t_dat"] >= test_start) & (work["t_dat"] <= test_end)]
+    train_df = _collect(temporal.get("train_snaps", []))
+    val_df = _collect(temporal.get("val_snaps", []))
+    test_df = _collect(temporal.get("test_snaps", []))
     return train_df, val_df, test_df
 
 

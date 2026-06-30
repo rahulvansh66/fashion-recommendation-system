@@ -7,13 +7,45 @@ epochs: 10
 learning_rate: 0.01
 weight_decay: 0.001
 
-# FR-BATCH-02 temporal split (v1-requirements.md)
+# FR-BATCH-02 snap-date temporal split (v1-requirements.md).
+# Each snap defines: feature cutoff (t_dat <= snap_date) and a 7-day forward
+# label window (snap_date+1 .. snap_date+7).  Train rows from both train snaps
+# are stacked; val/test/drift snaps are evaluated only, never passed to fit().
 temporal_split:
-  train_end: "2020-03-31"
-  val_start: "2020-04-01"
-  val_end: "2020-05-15"
-  test_start: "2020-05-16"
-  test_end: "2020-06-30"
+  train_snaps:
+    - snap_date: "2020-03-31"
+      label_start: "2020-04-01"
+      label_end: "2020-04-07"
+    - snap_date: "2020-04-07"
+      label_start: "2020-04-08"
+      label_end: "2020-04-14"
+  val_snaps:
+    - snap_date: "2020-04-14"
+      label_start: "2020-04-15"
+      label_end: "2020-04-21"
+    - snap_date: "2020-04-28"
+      label_start: "2020-04-29"
+      label_end: "2020-05-05"
+  test_snaps:
+    - snap_date: "2020-05-15"
+      label_start: "2020-05-16"
+      label_end: "2020-05-22"
+  drift_snaps:
+    - snap_date: "2020-05-31"
+      label_start: "2020-06-01"
+      label_end: "2020-06-07"
+    - snap_date: "2020-06-30"
+      label_start: "2020-07-01"
+      label_end: "2020-07-07"
+    - snap_date: "2020-07-31"
+      label_start: "2020-08-01"
+      label_end: "2020-08-07"
+    - snap_date: "2020-08-31"
+      label_start: "2020-09-01"
+      label_end: "2020-09-07"
+    - snap_date: "2020-09-15"
+      label_start: "2020-09-16"
+      label_end: "2020-09-22"
 
 # Canonical feature columns (no renaming at load time)
 query_features:

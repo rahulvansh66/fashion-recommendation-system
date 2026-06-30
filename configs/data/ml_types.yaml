@@ -1,0 +1,56 @@
+# ML-specific Pandas dtype mapping for raw H&M tables.
+#
+# These types are used by notebooks/utils/data_casting.py to cast DataFrames
+# after loading from CSV or Parquet, then persist the casted frames back to
+# Parquet so downstream notebooks never need to repeat type conversions.
+#
+# Dtype values are real Pandas dtype strings:
+#   object          — string IDs, codes, free text (no-op if already object)
+#   category        — low-cardinality nominal labels
+#   Int32           — nullable integer (pandas capital-I, supports pd.NA)
+#   float32         — continuous numeric values
+#   datetime64[ns]  — timestamp columns (handled via pd.to_datetime, writes as TIMESTAMP_NTZ)
+#   date            — date-only columns (writes as Parquet date32 / INT32, like PySpark DateType)
+
+articles:
+  article_id: object               # string ID, already forced in read_csv
+  product_code: object             # code (e.g. "0108775"), not a numeric quantity
+  prod_name: object                # free text
+  product_type_no: Int32           # numeric ID, nullable
+  product_type_name: category      # ~130 distinct values
+  product_group_name: category     # ~19 distinct values
+  graphical_appearance_no: Int32   # numeric ID, nullable
+  graphical_appearance_name: category  # ~30 distinct values
+  colour_group_code: object        # short code e.g. "09"
+  colour_group_name: category      # ~50 distinct values
+  perceived_colour_value_id: Int32 # ordinal, nullable
+  perceived_colour_value_name: category  # ~8 distinct values
+  perceived_colour_master_id: Int32      # ordinal, nullable
+  perceived_colour_master_name: category # ~20 distinct values
+  department_no: Int32             # numeric ID, nullable
+  department_name: category        # ~250 distinct values
+  index_code: object               # single-char code e.g. "A"
+  index_name: category             # ~10 distinct values
+  index_group_no: Int32            # numeric ID, nullable
+  index_group_name: category       # ~5 distinct values
+  section_no: Int32                # numeric ID, nullable
+  section_name: category           # ~56 distinct values
+  garment_group_no: Int32          # numeric ID, nullable
+  garment_group_name: category     # ~21 distinct values
+  detail_desc: object              # free text description
+
+customers:
+  customer_id: object              # string ID, already forced in read_csv
+  FN: category                     # binary flag: 1.0 or NaN — fillna("unknown") before cast
+  Active: category                 # same pattern as FN
+  club_member_status: category     # ~3 distinct values
+  fashion_news_frequency: category # ~4 distinct values
+  age: float32                     # has NaN, keep as float
+  postal_code: object              # string code, already forced in read_csv
+
+transactions:
+  t_dat: date                      # stored as Parquet date32 (INT32); use pd.to_datetime() if you need datetime ops
+  customer_id: object              # string ID, already forced in read_csv
+  article_id: object               # string ID, already forced in read_csv
+  price: float32                   # continuous price
+  sales_channel_id: Int32          # values 1 or 2, nullable

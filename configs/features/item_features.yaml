@@ -1,4 +1,4 @@
-# Item-level popularity, seasonality, and ratio features.
+# Item-level popularity, seasonality, ratio, price, recency, and channel features.
 # Category always uses garment_group_name per features-eng.md.
 
 columns:
@@ -16,3 +16,8 @@ derived:
   - item_category_recent_to_lifetime_ratio
   - item_seasonality_strength
   - days_since_first_sold
+  # New: price, recency, channel signals
+  - item_avg_price
+  - item_days_since_last_sold
+  - item_sales_channel_2_count
+  - item_sales_channel_2_share

@@ -33,7 +33,7 @@ serving/api — Recommendation Orchestrator
         |-- Fetch user features  (Redis hot path / S3 fallback)
         |-- Call Two-Tower SageMaker Endpoint  (user embedding)
         |-- Call FAISS Lambda  (candidate retrieval)
-        |-- Call CatBoost SageMaker Endpoint  (ranking)
+        |-- Call XGBoost SageMaker Endpoint  (ranking)
         |-- Apply business rules + postprocessing
         v
 Top-K recommended articles
@@ -92,7 +92,7 @@ fashion-recommendation-system/
 │       ├── contracts/                      # Stable interfaces between all components
 │       │   ├── __init__.py                 # Prevents training-serving skew via explicit schemas
 │       │   ├── recommendation.py           # RecommendationRequest, RecommendationResponse
-│       │   ├── ranking.py                  # CatBoostPredictionRequest, RankingResponse
+│       │   ├── ranking.py                  # XGBoostPredictionRequest, RankingResponse
 │       │   ├── features.py                 # UserFeatureVector, ItemFeatureVector, CandidateItem
 │       │   ├── rag.py                      # RagChatRequest, RagChatResponse
 │       │   └── events.py                   # Event logging schemas (exposure, click, purchase)
@@ -124,7 +124,7 @@ fashion-recommendation-system/
 │       │   └── datasets/                   # Model-specific dataset objects
 │       │       ├── __init__.py
 │       │       ├── two_tower_dataset.py    # PyTorch Dataset — positive pairs + negative sampling
-│       │       ├── catboost_dataset.py     # CatBoost Pool builder — user × item candidate frame
+│       │       ├── xgboost_dataset.py     # XGBoost Pool builder — user × item candidate frame
 │       │       └── rag_dataset.py          # RAG indexing dataset — article chunks
 │       │
 │       ├── features/                       # Feature engineering, selection, and feature store
@@ -149,7 +149,7 @@ fashion-recommendation-system/
 │       │   │   ├── item_style_tags.py      # Style tags from content_features (if enabled)
 │       │   │   └── build_item_features.py  # Composes all item feature builders
 │       │   │
-│       │   ├── cross_features/             # User × item interaction signals — critical for CatBoost
+│       │   ├── cross_features/             # User × item interaction signals — critical for XGBoost
 │       │   │   ├── __init__.py
 │       │   │   ├── user_item_category_overlap.py
 │       │   │   ├── price_match.py          # Diff between user avg price and item price
@@ -160,7 +160,7 @@ fashion-recommendation-system/
 │       │   │
 │       │   ├── selection/                  # Feature selection — not buried inside train.py
 │       │   │   ├── __init__.py
-│       │   │   ├── catboost_feature_selection.py
+│       │   │   ├── xgboost_feature_selection.py
 │       │   │   ├── two_tower_feature_selection.py
 │       │   │   ├── feature_importance.py
 │       │   │   ├── shap_analysis.py
@@ -210,13 +210,13 @@ fashion-recommendation-system/
 │       │   │
 │       │   ├── ranking/                    # Stage 2 — Re-ranking
 │       │   │   ├── __init__.py
-│       │   │   └── catboost/
+│       │   │   └── xgboost/
 │       │   │       ├── __init__.py
-│       │   │       ├── model.py            # CatBoostClassifier/Ranker wrapper
+│       │   │       ├── model.py            # XGBoostClassifier/Ranker wrapper
 │       │   │       ├── train.py            # SageMaker Training Job entry point
 │       │   │       ├── evaluate.py         # NDCG@K, MAP@K, MRR, hit rate
 │       │   │       ├── features.py         # Assemble candidate feature matrix at inference time
-│       │   │       ├── preprocess.py       # CatBoost-specific formatting (build Pool object)
+│       │   │       ├── preprocess.py       # XGBoost-specific formatting (build Pool object)
 │       │   │       ├── feature_config.py   # Feature lists live here — not inside train.py
 │       │   │       ├── export.py           # Export model.tar.gz for SageMaker
 │       │   │       └── inference.py        # SageMaker inference handler
@@ -317,7 +317,7 @@ fashion-recommendation-system/
 │       │   ├── sagemaker/                  # SageMaker Pipeline definitions
 │       │   │   ├── __init__.py
 │       │   │   ├── two_tower_pipeline.py
-│       │   │   ├── catboost_pipeline.py
+│       │   │   ├── xgboost_pipeline.py
 │       │   │   ├── llm_tag_pipeline.py
 │       │   │   ├── rag_index_pipeline.py
 │       │   │   └── shared_steps.py         # Reusable pipeline steps (data validation, model reg)
@@ -326,7 +326,7 @@ fashion-recommendation-system/
 │       │   │   │   ├── daily_feature_refresh.py
 │       │   │   │   ├── weekly_llm_tag_extraction.py
 │       │   │   │   ├── two_tower_retrain.py
-│       │   │   │   ├── catboost_retrain.py
+│       │   │   │   ├── xgboost_retrain.py
 │       │   │   │   └── rag_index_refresh.py
 │       │   │   └── plugins/
 │       │   └── step_functions/             # Step Functions ASL definitions
@@ -369,7 +369,7 @@ fashion-recommendation-system/
 │   │   └── cross_features.yaml             # Cross feature computation configs
 │   ├── models/
 │   │   ├── two_tower.yaml                  # Embedding dim, layers, learning rate, batch size
-│   │   ├── catboost_ranker.yaml            # Feature lists, tree params, eval metric
+│   │   ├── xgboost_ranker.yaml            # Feature lists, tree params, eval metric
 │   │   ├── llm_tag_extractor.yaml          # LoRA rank, base model, batch config
 │   │   └── rag.yaml                        # Chunk size, overlap, top-k retrieval
 │   └── serving/
@@ -382,7 +382,7 @@ fashion-recommendation-system/
 │   │                                       # These call into src/.../pipelines/ for orchestration logic
 │   ├── run_data_pipeline.py                # Step 1: ingestion + transforms + validation
 │   ├── run_feature_pipeline.py             # Step 2: build all feature tables
-│   ├── run_training_pipeline.py            # Step 3: train Two-Tower + CatBoost
+│   ├── run_training_pipeline.py            # Step 3: train Two-Tower + XGBoost
 │   ├── run_index_pipeline.py               # Step 4: build + publish FAISS retrieval index
 │   ├── run_content_features.py             # Optional: LLM batch inference → enriched/
 │   └── run_rag_pipeline.py                 # Standalone: build RAG index (future)
@@ -414,7 +414,7 @@ fashion-recommendation-system/
 │   │   ├── faiss_lambda.Dockerfile         # FAISS search Lambda
 │   │   ├── rag_api.Dockerfile              # RAG chatbot API
 │   │   ├── two_tower_inference.Dockerfile  # SageMaker Two-Tower endpoint
-│   │   └── catboost_inference.Dockerfile   # SageMaker CatBoost endpoint
+│   │   └── xgboost_inference.Dockerfile   # SageMaker XGBoost endpoint
 │   ├── scripts/
 │   │   ├── build_images.sh
 │   │   ├── push_images.sh
@@ -447,7 +447,7 @@ fashion-recommendation-system/
 │   │   └── test_api_load.py                # P95/P99 latency, cold-start impact
 │   ├── contract/
 │   │   ├── test_recommendation_api_contract.py
-│   │   └── test_sagemaker_contracts.py     # Two-Tower and CatBoost endpoint schemas
+│   │   └── test_sagemaker_contracts.py     # Two-Tower and XGBoost endpoint schemas
 │   └── conftest.py                         # Shared fixtures (LocalStack, mock Redis)
 │
 ├── notebooks/                              # Exploration and experiments — never import from src/
@@ -455,7 +455,7 @@ fashion-recommendation-system/
 │   ├── 02_eda_transactions.ipynb
 │   ├── 03_feature_analysis.ipynb
 │   ├── 04_two_tower_experiments.ipynb
-│   └── 05_catboost_experiments.ipynb
+│   └── 05_xgboost_experiments.ipynb
 │
 ├── data_contracts/                         # Explicit data schemas — protect against upstream drift
 │   ├── transactions.schema.json
@@ -463,13 +463,13 @@ fashion-recommendation-system/
 │   ├── articles.schema.json
 │   ├── user_features.schema.json
 │   ├── item_features.schema.json
-│   ├── catboost_training.schema.json
+│   ├── xgboost_training.schema.json
 │   └── rag_chunks.schema.json
 │
 ├── model_artifacts/                        # Local placeholders ONLY — real artifacts live in S3
 │   ├── README.md                           # Do not commit model files or FAISS indexes to git
 │   ├── two_tower/
-│   ├── catboost/
+│   ├── xgboost/
 │   ├── faiss/
 │   └── rag/
 │
@@ -512,7 +512,7 @@ fashion-recommendation-system/
 │   ├── adr/                                # Architecture Decision Records
 │   │   ├── 0001-use-two-stage-retrieval-ranking.md
 │   │   ├── 0002-use-faiss-for-ann.md
-│   │   ├── 0003-use-catboost-for-ranking.md
+│   │   ├── 0003-use-xgboost-for-ranking.md
 │   │   ├── 0004-separate-rag-from-recommendations.md
 │   │   ├── 0005-use-lambda-web-adapter.md
 │   │   ├── 0006-use-terraform-only-for-iac.md
@@ -524,7 +524,7 @@ fashion-recommendation-system/
 │   ├── implementation-info/
 │   └── outcomes-info/
 │
-├── requirements-training.txt               # torch, catboost, pyspark, sagemaker-sdk (~2GB)
+├── requirements-training.txt               # torch, xgboost, pyspark, sagemaker-sdk (~2GB)
 ├── requirements-content.txt               # transformers, peft, datasets, accelerate (~5GB)
 ├── requirements-serving.txt               # fastapi, uvicorn, redis, boto3, faiss-cpu (~50MB)
 └── requirements-dev.txt                   # pytest, black, ruff, mypy, moto, localstack
@@ -541,7 +541,7 @@ Two distinct configuration concerns are kept separate:
 Used for: hyperparameters, feature lists, preprocessing strategies, Top-K values, batch sizes. These are not secrets and change across experiments, not environments.
 
 ```yaml
-# configs/models/catboost_ranker.yaml
+# configs/models/xgboost_ranker.yaml
 features:
   categorical:
     - product_type_name
@@ -574,7 +574,7 @@ S3_BUCKET = os.getenv("S3_BUCKET", "fashion-recsys-dev")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 TWO_TOWER_ENDPOINT = os.getenv("TWO_TOWER_ENDPOINT", "http://localhost:8080")
-CATBOOST_ENDPOINT = os.getenv("CATBOOST_ENDPOINT", "http://localhost:8081")
+XGBOOST_ENDPOINT = os.getenv("XGBOOST_ENDPOINT", "http://localhost:8081")
 FAISS_LAMBDA_ARN = os.getenv("FAISS_LAMBDA_ARN", "")
 LOCALSTACK_ENDPOINT = os.getenv("LOCALSTACK_ENDPOINT", "")  # Empty = real AWS
 ```
@@ -612,7 +612,7 @@ s3://bucket/
 │
 ├── models/                     ← SageMaker Training Jobs write here
 │   ├── two_tower/model.tar.gz
-│   ├── catboost/model.tar.gz
+│   ├── xgboost/model.tar.gz
 │   └── content_features/model.tar.gz   (optional)
 │
 ├── indexes/                    ← pipeline scripts write here
@@ -646,7 +646,7 @@ Lambda cold start and package size are directly linked. PyTorch (~700MB) must ne
 
 | File | Contents | Used By |
 |---|---|---|
-| `requirements-training.txt` | torch, catboost, pyspark, sagemaker-sdk | `models/retrieval/`, `models/ranking/`, `features/` |
+| `requirements-training.txt` | torch, xgboost, pyspark, sagemaker-sdk | `models/retrieval/`, `models/ranking/`, `features/` |
 | `requirements-content.txt` | transformers, peft, datasets, accelerate | `models/content_features/` only — must stay isolated |
 | `requirements-serving.txt` | fastapi, uvicorn, redis, boto3, faiss-cpu | Lambda (API + FAISS), local API server |
 | `requirements-dev.txt` | pytest, black, ruff, mypy, moto, localstack | Local development and CI only |
@@ -679,8 +679,8 @@ Which predictive signals should the model use?
 Two-Tower-specific tensor formatting?
   → models/retrieval/two_tower/preprocess.py
 
-CatBoost-specific Pool construction?
-  → models/ranking/catboost/preprocess.py
+XGBoost-specific Pool construction?
+  → models/ranking/xgboost/preprocess.py
 ```
 
 ### Online Path Must Stay Lightweight
@@ -713,9 +713,9 @@ It must NOT perform heavy feature engineering, LLM calls, or batch transformatio
 | Build user purchase history | `features/user_features/purchase_history.py` |
 | Build price affinity | `features/user_features/price_affinity.py` |
 | Build category overlap | `features/cross_features/user_item_category_overlap.py` |
-| Select CatBoost features | `features/selection/catboost_feature_selection.py` |
+| Select XGBoost features | `features/selection/xgboost_feature_selection.py` |
 | Prepare Two-Tower pairs + negative sampling | `models/retrieval/two_tower/dataset.py` |
-| Define CatBoost feature list | `models/ranking/catboost/feature_config.py` |
+| Define XGBoost feature list | `models/ranking/xgboost/feature_config.py` |
 | Write features to S3 | `features/store/offline_writer.py` |
 | Write hot features to Redis | `features/store/online_writer.py` |
 | Fetch features at inference | `serving/api/services/feature_service.py` |
@@ -728,7 +728,7 @@ It must NOT perform heavy feature engineering, LLM calls, or batch transformatio
 # Core recommendation pipeline (run in order)
 data-pipeline:        # Step 1: raw → clean + validated
 feature-pipeline:     # Step 2: clean → model-ready features
-train:                # Step 3: train Two-Tower + CatBoost
+train:                # Step 3: train Two-Tower + XGBoost
 build-index:          # Step 4: build + publish recommendation FAISS index
 
 # Optional enrichment (run before feature-pipeline to enable tag features)
@@ -760,7 +760,7 @@ infra-down:           # terraform destroy (AWS)
 | Hot user features | ElastiCache Redis |
 | Offline features | S3 (parquet) |
 | Two-Tower inference | SageMaker real-time endpoint |
-| CatBoost inference | SageMaker real-time endpoint |
+| XGBoost inference | SageMaker real-time endpoint |
 | Batch feature jobs | SageMaker Processing or Glue |
 | Training jobs | SageMaker Training Jobs |
 | ML workflow orchestration | SageMaker Pipelines + Step Functions |

@@ -8,7 +8,7 @@ class RecommendationOrchestrator:
     def __init__(self):
         self.two_tower_client = HTTPClient("http://two-tower-service:8080")
         self.faiss_client = HTTPClient("http://faiss-service:8080") 
-        self.catboost_client = HTTPClient("http://catboost-service:8080")
+        self.xgboost_client = HTTPClient("http://xgboost-service:8080")
     
     async def get_recommendations(self, user_id):
         # Step 1: Get user embedding
@@ -18,7 +18,7 @@ class RecommendationOrchestrator:
         candidates = await self.faiss_client.post("/search", {"embedding": embedding})
         
         # Step 3: Score candidates
-        scores = await self.catboost_client.post("/score", {
+        scores = await self.xgboost_client.post("/score", {
             "user_id": user_id, 
             "candidates": candidates
         })
@@ -34,14 +34,14 @@ Yes, the **business flow is synchronous/sequential**, even though the implementa
 The flow is:
 
 ```text
-Two-Tower → FAISS → CatBoost → Finalize
+Two-Tower → FAISS → XGBoost → Finalize
 ```
 
 Each step depends on the previous step:
 
 - FAISS cannot run until the embedding is returned by Two-Tower.
-- CatBoost cannot run until candidates are returned by FAISS.
-- Final recommendations cannot be returned until CatBoost scores are available.
+- XGBoost cannot run until candidates are returned by FAISS.
+- Final recommendations cannot be returned until XGBoost scores are available.
 
 So this code is best described as:
 
@@ -76,16 +76,16 @@ This does **not** mean Request A moves to FAISS while its embedding is still pen
 For a single request, the flow remains sequential:
 
 ```text
-Request A: Two-Tower → FAISS → CatBoost
+Request A: Two-Tower → FAISS → XGBoost
 ```
 
 But across multiple requests, many pipelines can be in progress at once:
 
 ```text
 Time →
-Request A: Two-Tower ─wait─> FAISS ─wait─> CatBoost ─wait─> done
-Request B:      Two-Tower ─wait─> FAISS ─wait─> CatBoost ─wait─> done
-Request C:           Two-Tower ─wait─> FAISS ─wait─> CatBoost ─wait─> done
+Request A: Two-Tower ─wait─> FAISS ─wait─> XGBoost ─wait─> done
+Request B:      Two-Tower ─wait─> FAISS ─wait─> XGBoost ─wait─> done
+Request C:           Two-Tower ─wait─> FAISS ─wait─> XGBoost ─wait─> done
 ```
 
 So async helps multiple requests remain in flight concurrently.
@@ -100,7 +100,7 @@ class RecommendationOrchestrator:
     def __init__(self):
         self.two_tower_client = SyncHTTPClient("http://two-tower-service:8080")
         self.faiss_client = SyncHTTPClient("http://faiss-service:8080")
-        self.catboost_client = SyncHTTPClient("http://catboost-service:8080")
+        self.xgboost_client = SyncHTTPClient("http://xgboost-service:8080")
 
     def get_recommendations(self, user_id):
         # Step 1: Get user embedding
@@ -110,7 +110,7 @@ class RecommendationOrchestrator:
         candidates = self.faiss_client.post("/search", {"embedding": embedding})
 
         # Step 3: Score candidates
-        scores = self.catboost_client.post("/score", {
+        scores = self.xgboost_client.post("/score", {
             "user_id": user_id,
             "candidates": candidates
         })
@@ -142,7 +142,7 @@ class RecommendationOrchestrator:
     def __init__(self):
         self.two_tower_client = HTTPClient("http://two-tower-service:8080")
         self.faiss_client = HTTPClient("http://faiss-service:8080")
-        self.catboost_client = HTTPClient("http://catboost-service:8080")
+        self.xgboost_client = HTTPClient("http://xgboost-service:8080")
         self.profile_client = HTTPClient("http://profile-service:8080")
         self.rules_client = HTTPClient("http://rules-service:8080")
 
@@ -165,7 +165,7 @@ class RecommendationOrchestrator:
             "embedding": embedding
         })
 
-        scores = await self.catboost_client.post("/score", {
+        scores = await self.xgboost_client.post("/score", {
             "user_id": user_id,
             "profile": profile,
             "candidates": candidates
@@ -182,7 +182,7 @@ profile_task
 rules_task
 ```
 
-But FAISS still depends on the embedding, and CatBoost still depends on the candidates.
+But FAISS still depends on the embedding, and XGBoost still depends on the candidates.
 
 
 ---
@@ -195,7 +195,7 @@ class RecommendationOrchestrator:
     def __init__(self):
         self.two_tower_client = HTTPClient("http://two-tower-service:8080")
         self.faiss_client = HTTPClient("http://faiss-service:8080") 
-        self.catboost_client = HTTPClient("http://catboost-service:8080")
+        self.xgboost_client = HTTPClient("http://xgboost-service:8080")
     
     async def get_recommendations(self, user_id):
         # Step 1: Get user embedding
@@ -205,7 +205,7 @@ class RecommendationOrchestrator:
         candidates = await self.faiss_client.post("/search", {"embedding": embedding})
         
         # Step 3: Score candidates
-        scores = await self.catboost_client.post("/score", {
+        scores = await self.xgboost_client.post("/score", {
             "user_id": user_id, 
             "candidates": candidates
         })
@@ -240,7 +240,7 @@ Your code:
 ```python
 embedding = await self.two_tower_client.post(...)
 candidates = await self.faiss_client.post(...)
-scores = await self.catboost_client.post(...)
+scores = await self.xgboost_client.post(...)
 return self.finalize_recommendations(scores)
 ```
 
@@ -264,7 +264,7 @@ Request comes in
 → wait
 → call FAISS
 → wait
-→ call CatBoost
+→ call XGBoost
 → wait
 → return response
 ```
@@ -430,7 +430,7 @@ Two-Tower
   ↓
 FAISS
   ↓
-CatBoost
+XGBoost
   ↓
 Response to Client
 ```
@@ -483,7 +483,7 @@ User Activity API
       ↓
 Recommendation Worker
       ↓
-Two-Tower → FAISS → CatBoost
+Two-Tower → FAISS → XGBoost
       ↓
 Recommendation Store
       ↓
@@ -514,16 +514,16 @@ Example:
 Huge traffic spike → SQS absorbs messages → workers process gradually
 ```
 
-Instead of overwhelming Two-Tower, FAISS, or CatBoost, jobs wait in the queue.
+Instead of overwhelming Two-Tower, FAISS, or XGBoost, jobs wait in the queue.
 
 ### Retry and Failure Handling
 
 Example:
 
 ```text
-Attempt 1: CatBoost failed
-Attempt 2: CatBoost failed
-Attempt 3: CatBoost succeeded
+Attempt 1: XGBoost failed
+Attempt 2: XGBoost failed
+Attempt 3: XGBoost succeeded
 ```
 
 SQS can make failed jobs available again for retry.
@@ -570,7 +570,7 @@ Frontend: But I need the result now.
 
 SQS is asynchronous by nature. It is better when the result can be processed later.
 
-## 13. Should SQS Be Put Between Two-Tower, FAISS, and CatBoost?
+## 13. Should SQS Be Put Between Two-Tower, FAISS, and XGBoost?
 
 Usually, no.
 
@@ -578,14 +578,14 @@ These steps are tightly dependent:
 
 ```text
 FAISS needs embedding.
-CatBoost needs candidates.
+XGBoost needs candidates.
 Final response needs scores.
 ```
 
 Putting queues between every step would create:
 
 ```text
-Orchestrator → SQS → Two-Tower Worker → SQS → FAISS Worker → SQS → CatBoost Worker
+Orchestrator → SQS → Two-Tower Worker → SQS → FAISS Worker → SQS → XGBoost Worker
 ```
 
 That adds:
@@ -611,7 +611,7 @@ For immediate recommendations:
 
 ```text
 GET /recommendations
-→ Orchestrator directly calls Two-Tower, FAISS, CatBoost
+→ Orchestrator directly calls Two-Tower, FAISS, XGBoost
 → returns recommendations
 ```
 
@@ -649,7 +649,7 @@ Use **SQS** when you need the work done **reliably later**.
 
 For the exact orchestrator:
 
-> SQS is useful for precomputing, refreshing, retrying, and buffering recommendation jobs, but not usually for the live `Two-Tower → FAISS → CatBoost` request path.
+> SQS is useful for precomputing, refreshing, retrying, and buffering recommendation jobs, but not usually for the live `Two-Tower → FAISS → XGBoost` request path.
 
 ## 16. Explanation of Terms
 
@@ -663,7 +663,7 @@ Instead of doing this live:
 User opens app
 → API calls Two-Tower
 → API calls FAISS
-→ API calls CatBoost
+→ API calls XGBoost
 → return recommendations
 ```
 
@@ -727,16 +727,16 @@ Worker starts recommendation job
 → success
 → calls FAISS
 → success
-→ calls CatBoost
-→ CatBoost service is temporarily down
+→ calls XGBoost
+→ XGBoost service is temporarily down
 ```
 
 With SQS, the message can become visible again after a timeout, and another worker can try again later.
 
 ```text
-Attempt 1: CatBoost failed
-Attempt 2: CatBoost failed
-Attempt 3: CatBoost succeeded
+Attempt 1: XGBoost failed
+Attempt 2: XGBoost failed
+Attempt 3: XGBoost succeeded
 ```
 
 So:
@@ -781,7 +781,7 @@ So:
 |---|---|---|
 | Precomputing | Generate before user asks | Build recommendations overnight |
 | Refreshing | Update old results | Recompute after user clicks, buys, or views |
-| Retrying | Try again after failure | CatBoost failed, process job again |
+| Retrying | Try again after failure | XGBoost failed, process job again |
 | Buffering | Absorb traffic spikes | Queue 100k jobs, process safely |
 
 ## 18. Final Takeaway
@@ -789,7 +789,7 @@ So:
 For a live recommendation API:
 
 ```text
-Client waits → API Orchestrator → Two-Tower → FAISS → CatBoost → Response
+Client waits → API Orchestrator → Two-Tower → FAISS → XGBoost → Response
 ```
 
 Use direct async HTTP.
@@ -797,7 +797,7 @@ Use direct async HTTP.
 For background recommendation processing:
 
 ```text
-User event → SQS → Worker → Two-Tower → FAISS → CatBoost → Store recommendations
+User event → SQS → Worker → Two-Tower → FAISS → XGBoost → Store recommendations
 ```
 
 Use SQS.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide explains how to integrate visual features from product images into the Two-Tower Retrieval + CatBoost Ranking architecture. Currently, the system uses only text embeddings (384-dim SentenceTransformer) and structured metadata. Adding image features will capture visual similarity patterns that text cannot describe.
+This guide explains how to integrate visual features from product images into the Two-Tower Retrieval + XGBoost Ranking architecture. Currently, the system uses only text embeddings (384-dim SentenceTransformer) and structured metadata. Adding image features will capture visual similarity patterns that text cannot describe.
 
 **Current State:** Images stored as URLs (`image_url`), used only for UI display.
 
@@ -106,7 +106,7 @@ Item Tower Input (AFTER):
   → 256-dim embedding (increased from 16)
 
 
-TRAINING: CatBoost Ranking
+TRAINING: XGBoost Ranking
 ---------------------------
 Features (BEFORE):
   - customer_id, age, article_id
@@ -516,9 +516,9 @@ class ItemTower(nn.Module):
 
 ---
 
-### 1.5 Integration into CatBoost Ranking
+### 1.5 Integration into XGBoost Ranking
 
-CatBoost can handle high-dimensional numerical features, but 512-2048 dims may be too many. Two recommended approaches:
+XGBoost can handle high-dimensional numerical features, but 512-2048 dims may be too many. Two recommended approaches:
 
 #### Option A: Use PCA-Reduced Image Embedding (Recommended)
 
@@ -807,9 +807,9 @@ class MultiModalItemTower(nn.Module):
 - [ ] Retrain Two-Tower model
 - [ ] Evaluate Recall@100, NDCG@10
 
-**Week 3: CatBoost Integration**
+**Week 3: XGBoost Integration**
 - [ ] Add PCA image features to ranking dataset
-- [ ] Retrain CatBoost model
+- [ ] Retrain XGBoost model
 - [ ] A/B test baseline vs image-enhanced
 - [ ] Measure precision@10, feature importance
 
@@ -829,7 +829,7 @@ class MultiModalItemTower(nn.Module):
 
 **Week 3-4: Evaluation**
 - [ ] Replace CLIP with fine-tuned embeddings
-- [ ] Retrain Two-Tower + CatBoost
+- [ ] Retrain Two-Tower + XGBoost
 - [ ] Compare pre-trained vs fine-tuned
 
 **Success Criteria:**
@@ -943,8 +943,8 @@ n_components = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= 0.90) + 1
 |-----------|---------|-------|
 | **Two-Tower (no images)** | 5ms | Baseline |
 | **Two-Tower (with images)** | 8ms | +3ms for larger MLP |
-| **CatBoost (no images)** | 10ms | 20 features |
-| **CatBoost (with PCA images)** | 15ms | 20 + 128 features |
+| **XGBoost (no images)** | 10ms | 20 features |
+| **XGBoost (with PCA images)** | 15ms | 20 + 128 features |
 
 **Latency Optimization:**
 - ✅ Pre-compute item embeddings offline
@@ -970,7 +970,7 @@ n_components = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= 0.90) + 1
 2. **Choose approach:** Start with Pre-trained CLIP (Approach 1)
 3. **Extract embeddings:** Run image_embeddings.py
 4. **Integrate into Two-Tower:** Update ItemTower class
-5. **Integrate into CatBoost:** Add PCA image features
+5. **Integrate into XGBoost:** Add PCA image features
 6. **Evaluate metrics:** Compare baseline vs image-enhanced
 7. **Iterate:** Try fine-tuning if needed
 

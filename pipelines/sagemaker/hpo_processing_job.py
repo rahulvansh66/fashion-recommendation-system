@@ -35,9 +35,9 @@ def main() -> None:
     processor = ScriptProcessor(
         role=args.role,
         image_uri=session.image_uris.retrieve(
-            framework="tensorflow",
+            framework="pytorch",
             region=region,
-            version="2.15",
+            version="2.3",
             py_version="py311",
             instance_type=sm_cfg.get("instance_type", "ml.m5.large"),
         ),

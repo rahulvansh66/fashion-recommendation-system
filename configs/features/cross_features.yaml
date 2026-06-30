@@ -1,4 +1,4 @@
-# User–item cross features (CatBoost ranker inputs).
+# User–item and user–category cross features (XGBoost ranker inputs).
 
 decay:
   half_life_days: 180
@@ -8,8 +8,27 @@ price:
   use_article_avg_price: true
   std_floor: 1.0e-6
 
+# Windowed repurchase look-back windows for user–item pair history
+user_item_repurchase_windows_days:
+  - 30
+  - 90
+  - 365
+
 derived:
+  # User–item: lifetime and decayed
   - user_item_repurchase
   - user_item_decayed_repurchase
   - user_item_decayed_interaction_ratio
   - user_item_price_decayed_zscore
+  # User–item: windowed repurchase and pair recency (new)
+  - user_item_repurchase_30d
+  - user_item_repurchase_90d
+  - user_item_repurchase_365d
+  - user_item_days_since_last_purchase
+  - user_item_sales_channel_2_count
+  # User–category: purchase volume, recency, and affinity flags (new)
+  - user_purchases_in_candidate_category_1y
+  - user_days_since_last_purchase_in_category
+  - user_category_match_rank1
+  - user_category_match_rank2
+  - user_category_match_rank3

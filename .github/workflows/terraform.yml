@@ -1,0 +1,52 @@
+name: Terraform Plan
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "src/**"
+      - "deployment/**"
+      - ".github/workflows/terraform.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/**"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  TF_VAR_FILE: environments/dev/terraform.tfvars
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.7
+
+      - name: Terraform Init
+        working-directory: infra
+        run: terraform init -backend=false
+
+      - name: Terraform Format Check
+        working-directory: infra
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Plan
+        working-directory: infra
+        run: terraform plan -var-file=${{ env.TF_VAR_FILE }} -no-color

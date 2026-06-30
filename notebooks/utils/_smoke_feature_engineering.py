@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "notebooks"))
 
 os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
@@ -19,8 +19,8 @@ if sys.platform == "win32" and (_hadoop_home / "bin" / "winutils.exe").exists():
     if _bin not in os.environ.get("PATH", ""):
         os.environ["PATH"] = _bin + os.pathsep + os.environ.get("PATH", "")
 
-from config_loader import load_feature_engineering_config
-from feature_engineering_core import build_enriched_transactions
+from utils.config_loader import load_feature_engineering_config
+from utils.feature_engineering_core import build_enriched_transactions
 from pyspark.sql import SparkSession
 
 

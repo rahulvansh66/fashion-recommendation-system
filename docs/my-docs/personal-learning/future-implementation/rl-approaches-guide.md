@@ -4,7 +4,7 @@
 
 Approaches are ordered from **most practical to most ambitious**. The ranking is based on three factors specific to your system:
 
-1. **How much existing infrastructure you reuse** (Two-Tower + CatBoost, interaction features, S3/SageMaker)
+1. **How much existing infrastructure you reuse** (Two-Tower + XGBoost, interaction features, S3/SageMaker)
 2. **How much online feedback data you have** (you have offline interactions only right now)
 3. **Implementation cost vs. expected gain**
 
@@ -14,7 +14,7 @@ Read them in order. Each approach builds on the previous one. Start with Approac
 
 ## Why RL at All?
 
-Your current Two-Tower + CatBoost pipeline has one structural blind spot: **it treats every recommendation independently**. Each prediction answers "does this user like this item?" in isolation. It never asks:
+Your current Two-Tower + XGBoost pipeline has one structural blind spot: **it treats every recommendation independently**. Each prediction answers "does this user like this item?" in isolation. It never asks:
 
 - "If I show this item *now*, will the user come back tomorrow?"
 - "What is the best *sequence* of items to show across a session?"
@@ -35,7 +35,7 @@ Before the approaches, here is what your existing system already provides to RL:
 | `interaction_score` (0/1/2) | **Reward signal**: ignore → click → purchase |
 | `prev_article_id` | **State transition**: captures session sequence |
 | Two-Tower 256-dim user embedding | **State representation**: compressed user preference |
-| CatBoost score | **Baseline policy**: the policy RL needs to improve over |
+| XGBoost score | **Baseline policy**: the policy RL needs to improve over |
 | 100 FAISS candidates | **Action space**: tractable set of choices per step |
 | Redis feature cache | **Low-latency state fetch** at serving time |
 
@@ -80,7 +80,7 @@ def interaction_score_to_reward(score: int) -> float:
 
 ### The Problem It Solves
 
-CatBoost always recommends the items it is most confident about. This creates a feedback loop:
+XGBoost always recommends the items it is most confident about. This creates a feedback loop:
 
 ```
 Popular items get shown → get more interaction data
@@ -90,7 +90,7 @@ Popular items get shown → get more interaction data
 → catalog coverage collapses to ~5% of items
 ```
 
-The fix: with probability `ε`, ignore CatBoost's ranking and inject one random unexplored candidate.
+The fix: with probability `ε`, ignore XGBoost's ranking and inject one random unexplored candidate.
 
 ---
 
@@ -105,7 +105,7 @@ import numpy as np
 
 class EpsilonGreedyExplorer:
     """
-    Wraps the CatBoost ranker with epsilon-greedy exploration.
+    Wraps the XGBoost ranker with epsilon-greedy exploration.
     Injects random FAISS candidates to prevent popularity bias
     and collect diverse interaction data for future RL training.
     """
@@ -117,13 +117,13 @@ class EpsilonGreedyExplorer:
 
     def rerank(
         self,
-        catboost_ranked: list[dict],
+        xgboost_ranked: list[dict],
         faiss_candidates: list[str],
         top_k: int = 10
     ) -> list[dict]:
         """
         Args:
-            catboost_ranked: Items sorted by CatBoost score descending.
+            xgboost_ranked: Items sorted by XGBoost score descending.
                              Each item: {'article_id': str, 'score': float}
             faiss_candidates: All 100 article_ids from FAISS.
             top_k: Final list size.
@@ -132,7 +132,7 @@ class EpsilonGreedyExplorer:
             Final recommendation list, with one slot replaced by
             an exploration item when epsilon fires.
         """
-        result = catboost_ranked[:top_k]
+        result = xgboost_ranked[:top_k]
 
         if random.random() < self.epsilon:
             shown_ids = {item['article_id'] for item in result}
@@ -178,19 +178,19 @@ class UCBExplorer:
 
     def blend_and_rerank(
         self,
-        catboost_ranked: list[dict],
+        xgboost_ranked: list[dict],
         top_k: int = 10,
         ucb_weight: float = 0.3
     ) -> list[dict]:
-        """Blend CatBoost score with UCB uncertainty bonus."""
+        """Blend XGBoost score with UCB uncertainty bonus."""
 
-        total = sum(self.stats.get(i['article_id'], [0])[0] for i in catboost_ranked) or 1
+        total = sum(self.stats.get(i['article_id'], [0])[0] for i in xgboost_ranked) or 1
 
         scored = []
-        for item in catboost_ranked:
-            catboost_score = item['score']
+        for item in xgboost_ranked:
+            xgboost_score = item['score']
             ucb_bonus = self.ucb_score(item['article_id'], total)
-            blended = (1 - ucb_weight) * catboost_score + ucb_weight * min(ucb_bonus, 3.0)
+            blended = (1 - ucb_weight) * xgboost_score + ucb_weight * min(ucb_bonus, 3.0)
             scored.append({**item, 'blended': blended})
 
         scored.sort(key=lambda x: x['blended'], reverse=True)
@@ -223,7 +223,7 @@ async def get_recommendations(user_id: str, top_k: int = 10):
     user_features = redis.get_user_features(user_id)
     user_embedding = sagemaker.invoke_two_tower(user_features)
     faiss_candidates = faiss_lambda.search(user_embedding, k=100)
-    ranked = sagemaker.invoke_catboost(user_features, faiss_candidates)
+    ranked = sagemaker.invoke_xgboost(user_features, faiss_candidates)
 
     # One new line
     ranked = explorer.rerank(ranked, faiss_candidates, top_k=top_k)
@@ -243,18 +243,18 @@ Move forward when you have 10K+ logged outcomes from live serving, or when item 
 
 **Complexity:** Low–Medium
 **Implementation Time:** 1–2 weeks
-**Architecture Change:** LinUCB replaces CatBoost in the ranking position
-**Expected Gain:** +10–15% engagement vs. static CatBoost
-**Why Second:** Same input/output contract as CatBoost; learns from every feedback event.
+**Architecture Change:** LinUCB replaces XGBoost in the ranking position
+**Expected Gain:** +10–15% engagement vs. static XGBoost
+**Why Second:** Same input/output contract as XGBoost; learns from every feedback event.
 
 ---
 
-### The Problem with Static CatBoost
+### The Problem with Static XGBoost
 
-CatBoost is trained once on historical data and never updates. If a user's preferences drift — switching from casual to office wear mid-year — CatBoost never adapts. A **contextual bandit** updates its weights continuously: every click and purchase immediately improves the next recommendation.
+XGBoost is trained once on historical data and never updates. If a user's preferences drift — switching from casual to office wear mid-year — XGBoost never adapts. A **contextual bandit** updates its weights continuously: every click and purchase immediately improves the next recommendation.
 
 ```
-Static CatBoost:
+Static XGBoost:
   Train on H&M transactions (2018–2020)
   → Fixed policy deployed forever
   → Recommends "what was popular then"
@@ -270,7 +270,7 @@ LinUCB Bandit:
 
 ### LinUCB: Linear Contextual Bandit
 
-LinUCB models expected reward as a linear function of user×item context features — the same features CatBoost uses. But it also tracks per-item uncertainty and explores items where confidence is low.
+LinUCB models expected reward as a linear function of user×item context features — the same features XGBoost uses. But it also tracks per-item uncertainty and explores items where confidence is low.
 
 ```python
 # src/ranking/linucb.py
@@ -282,7 +282,7 @@ class LinUCBRanker:
     """
     Linear Upper Confidence Bound contextual bandit.
 
-    Drop-in replacement for CatBoost in the ranking stage.
+    Drop-in replacement for XGBoost in the ranking stage.
     Same interface: takes user+item features, returns ranked list.
 
     Reference: Li et al., "A Contextual-Bandit Approach to
@@ -294,7 +294,7 @@ class LinUCBRanker:
         Args:
             feature_dim: Length of the context vector per (user, item) pair.
             alpha: Exploration parameter.
-                   alpha=0.0 → pure greedy (same as CatBoost).
+                   alpha=0.0 → pure greedy (same as XGBoost).
                    alpha=1.0 → balanced exploration/exploitation.
                    alpha=5.0 → heavy exploration for cold-start phase.
         """
@@ -369,7 +369,7 @@ class LinUCBRanker:
         """
         Build the context vector for LinUCB from user and item features.
 
-        Uses the same features as CatBoost + Two-Tower user embedding.
+        Uses the same features as XGBoost + Two-Tower user embedding.
         The Two-Tower embedding encodes long-term preference history
         in 256 dimensions — much richer than age alone.
         """
@@ -437,7 +437,7 @@ class BanditStateStore:
 
 **Complexity:** Medium
 **Implementation Time:** 2–3 weeks
-**Architecture Change:** Q-Network replaces CatBoost; trained offline on interaction data
+**Architecture Change:** Q-Network replaces XGBoost; trained offline on interaction data
 **Expected Gain:** +15–20% engagement; optimises long-term not just immediate reward
 **Why Third:** Doesn't need a live feedback loop — trains entirely on your existing interaction dataset.
 
@@ -445,7 +445,7 @@ class BanditStateStore:
 
 ### The Limitation of Bandits: No Long-Term View
 
-Both CatBoost and LinUCB optimise for **immediate reward**: will the user click this item right now? Neither considers: "if I recommend this item today and the user ignores it, but then buys it 3 days later — what was the right decision?"
+Both XGBoost and LinUCB optimise for **immediate reward**: will the user click this item right now? Neither considers: "if I recommend this item today and the user ignores it, but then buys it 3 days later — what was the right decision?"
 
 A Q-function estimates **cumulative discounted future reward**, not just immediate reward. It answers: "given this user state, what is the total expected engagement from recommending this item, across all future interactions?"
 
@@ -625,7 +625,7 @@ def build_offline_rl_dataset(interactions_df, item_embeddings_df, user_embedding
 
 class CQLRankingService:
     """
-    Drop-in replacement for CatBoost at serving time.
+    Drop-in replacement for XGBoost at serving time.
     Ranks 100 FAISS candidates by Q-value.
     """
 
@@ -901,7 +901,7 @@ class DPPSlateSelector:
     """
     DPP-based diverse slate selection.
 
-    Balances relevance (CatBoost/Q-network scores) with
+    Balances relevance (XGBoost/Q-network scores) with
     diversity (embedding distance between items).
     """
 
@@ -994,7 +994,7 @@ class DPPSlateSelector:
 **Wire into serving after any ranker:**
 
 ```python
-# Usage with any ranker (CatBoost, LinUCB, CQL, Actor-Critic)
+# Usage with any ranker (XGBoost, LinUCB, CQL, Actor-Critic)
 ranker_output = ranker.rank(user_state, candidates)
 dpp = DPPSlateSelector(diversity_weight=0.4)
 final_slate = dpp.rerank(ranker_output, item_embeddings, k=10)
@@ -1008,9 +1008,9 @@ final_slate = dpp.rerank(ranker_output, item_embeddings, k=10)
 APPROACH       REPLACES         INPUT/OUTPUT CHANGE    RL TYPE
 ────────────────────────────────────────────────────────────────────
 1. ε-Greedy    Nothing          None (wrapper)          Multi-armed bandit
-2. LinUCB      CatBoost         Same contract           Contextual bandit
-3. CQL         CatBoost         Same contract           Offline RL (Q-learning)
-4. Actor-Critic CatBoost        Adds session input      Online RL (Policy gradient)
+2. LinUCB      XGBoost         Same contract           Contextual bandit
+3. CQL         XGBoost         Same contract           Offline RL (Q-learning)
+4. Actor-Critic XGBoost        Adds session input      Online RL (Policy gradient)
 5. DPP         Nothing          Post-processing only    Non-RL (set selection)
 ────────────────────────────────────────────────────────────────────
 ```
@@ -1026,17 +1026,17 @@ TODAY — no live feedback loop yet:
     Starts collecting diverse interaction data.
 
 AFTER 10K+ live interaction events:
-  → Replace CatBoost with LinUCB (Approach 2).
+  → Replace XGBoost with LinUCB (Approach 2).
     Same input/output contract, adapts online.
 
 ALTERNATIVELY — if you cannot do live A/B testing:
   → Train CQL offline (Approach 3) on the interaction feature group.
     No live feedback loop required.
-    Still a large improvement over static CatBoost.
+    Still a large improvement over static XGBoost.
 
 AFTER 20K+ session-level logs with prev_article_id populated:
   → Add session encoder (Approach 4).
-    Captures browsing context CatBoost never models.
+    Captures browsing context XGBoost never models.
 
 ADD AT ANY STAGE:
   → DPP diversity layer (Approach 5).
@@ -1068,7 +1068,7 @@ RL requires metrics that static offline evaluation misses:
 
 **2. Reward delay:** User buys item 3 days after recommendation. Bandit sees no reward signal. Fix: attribute delayed purchase reward backward to the click event that preceded it.
 
-**3. Distribution shift in CQL:** Q-function trained on CatBoost-collected data does not generalise to actions CatBoost never tried. Fix: CQL regulariser (built into Approach 3) directly addresses this.
+**3. Distribution shift in CQL:** Q-function trained on XGBoost-collected data does not generalise to actions XGBoost never tried. Fix: CQL regulariser (built into Approach 3) directly addresses this.
 
 **4. Position bias:** Items in slot 1 get clicked more than items in slot 10 regardless of quality. RL model learns "slot 1 items are better." Fix: Inverse Propensity Scoring — down-weight rewards proportional to the probability of the item being shown in that position.
 
@@ -1096,7 +1096,7 @@ All 5 are used in industry. The question that matters is which ones are used **a
 | **Zalando, ASOS** | Exploration layers on product ranking to prevent popular-item dominance in fashion catalogs |
 
 **Why it fits your system:**
-Your Lambda handler already holds the full CatBoost-ranked list. The ε-greedy wrapper is one `if random.random() < epsilon` check plus one list swap. Zero added latency. This is also the technique that *generates the diverse interaction data* every more advanced approach depends on — without it, your interaction dataset will always reflect CatBoost's existing biases.
+Your Lambda handler already holds the full XGBoost-ranked list. The ε-greedy wrapper is one `if random.random() < epsilon` check plus one list swap. Zero added latency. This is also the technique that *generates the diverse interaction data* every more advanced approach depends on — without it, your interaction dataset will always reflect XGBoost's existing biases.
 
 **Verdict: Start here. No question.**
 
@@ -1123,15 +1123,15 @@ Current pipeline:
   Redis fetch (user features):     ~2ms
   Two-Tower (SageMaker endpoint):  ~20ms
   FAISS Lambda (ANN search):        ~1ms
-  CatBoost (SageMaker endpoint):   ~10ms
+  XGBoost (SageMaker endpoint):   ~10ms
   ──────────────────────────────────────
   Total:                           ~33ms
 
-With LinUCB replacing CatBoost:
+With LinUCB replacing XGBoost:
   Redis fetch (user features):     ~2ms
   Two-Tower (SageMaker endpoint):  ~20ms
   FAISS Lambda (ANN search):        ~1ms
-  LinUCB scoring (100 candidates):  ~3ms   ← replaces CatBoost's ~10ms
+  LinUCB scoring (100 candidates):  ~3ms   ← replaces XGBoost's ~10ms
   ──────────────────────────────────────
   Total:                           ~26ms   ← faster than current
 ```
@@ -1154,11 +1154,11 @@ LinUCB runs fully inside Lambda — no SageMaker endpoint call needed. The matri
 | **Microsoft** | CQL-based offline RL deployed in Azure Personalizer service |
 
 **Why JD.com is the most directly comparable:**
-JD.com is a large fashion and general merchandise e-commerce platform. Their published RL architecture is: retrieval model (equivalent to your Two-Tower + FAISS) → ranking model trained with offline RL on historical interaction logs (equivalent to replacing your CatBoost with a Q-network trained on your interaction feature group). Their published results show 10–20% CTR improvement over static gradient-boosted rankers.
+JD.com is a large fashion and general merchandise e-commerce platform. Their published RL architecture is: retrieval model (equivalent to your Two-Tower + FAISS) → ranking model trained with offline RL on historical interaction logs (equivalent to replacing your XGBoost with a Q-network trained on your interaction feature group). Their published results show 10–20% CTR improvement over static gradient-boosted rankers.
 
-**Latency at inference time:** The Q-network is a small feedforward neural network — one forward pass over 100 candidates takes ~3–5ms. Same order as CatBoost. No added latency versus the current system.
+**Latency at inference time:** The Q-network is a small feedforward neural network — one forward pass over 100 candidates takes ~3–5ms. Same order as XGBoost. No added latency versus the current system.
 
-**The one prerequisite:** You need diverse offline interaction data. Running ε-greedy first (Approach 1) ensures the interaction dataset covers unexplored items rather than reflecting only CatBoost's historical biases.
+**The one prerequisite:** You need diverse offline interaction data. Running ε-greedy first (Approach 1) ensures the interaction dataset covers unexplored items rather than reflecting only XGBoost's historical biases.
 
 **Verdict: Production-proven for e-commerce with history-based signals. Worth implementing after 50K+ diverse interactions are collected.**
 
@@ -1225,7 +1225,7 @@ Step                              Component            Latency
 3. Retrieve 100 candidates         FAISS Lambda         ~1ms
 
 4. Score and rank 100 items        LinUCB (in Lambda)   ~3ms
-   (replaces CatBoost endpoint)    or Q-Network
+   (replaces XGBoost endpoint)    or Q-Network
 
 5. Rerank top-20 for diversity     DPP (in Lambda)      ~3ms
 
@@ -1243,7 +1243,7 @@ Offline jobs (not on the request path — no latency impact)
 ────────────────────────────────────────────────────────────────
 ```
 
-**Key insight about latency:** The expensive steps — Two-Tower SageMaker call (~20ms) and FAISS search (~1ms) — do not change with any RL approach. Every RL approach only touches the **ranking step**, which currently costs ~10ms as a SageMaker CatBoost call. LinUCB replaces that with ~3ms of in-Lambda matrix operations — actually *reducing* total latency by eliminating one SageMaker hop. DPP adds 3ms. The overall request time stays well within budget.
+**Key insight about latency:** The expensive steps — Two-Tower SageMaker call (~20ms) and FAISS search (~1ms) — do not change with any RL approach. Every RL approach only touches the **ranking step**, which currently costs ~10ms as a SageMaker XGBoost call. LinUCB replaces that with ~3ms of in-Lambda matrix operations — actually *reducing* total latency by eliminating one SageMaker hop. DPP adds 3ms. The overall request time stays well within budget.
 
 ---
 
@@ -1251,13 +1251,13 @@ Offline jobs (not on the request path — no latency impact)
 
 ```
 Week 1 — Zero cost, zero model changes
-  ✅ Deploy ε-greedy wrapper around CatBoost output
+  ✅ Deploy ε-greedy wrapper around XGBoost output
   ✅ Log recommendation outcomes (article_id, position, interaction_score) to S3
   ✅ Monitor: item coverage, diversity, CTR by position
 
 Week 2–3 — First RL model
   ✅ Train LinUCB on collected + historical interaction data
-  ✅ A/B test: 10% traffic → LinUCB, 90% → CatBoost
+  ✅ A/B test: 10% traffic → LinUCB, 90% → XGBoost
   ✅ Measure: CTR, purchase rate, item coverage
   ✅ Estimated AWS cost: ~$5
 
@@ -1269,7 +1269,7 @@ Any week — Add diversity (no training needed)
 Month 2 — Offline RL (after 50K+ diverse interactions collected)
   ✅ Build (state, action, reward, next_state) dataset from interaction feature group
   ✅ Train CQL Q-network on SageMaker Training Job
-  ✅ Shadow test: log Q-values alongside CatBoost scores, do not serve yet
+  ✅ Shadow test: log Q-values alongside XGBoost scores, do not serve yet
   ✅ Evaluate on held-out interaction sessions
   ✅ Estimated AWS cost: ~$10
 

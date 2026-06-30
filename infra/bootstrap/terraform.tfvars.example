@@ -1,0 +1,16 @@
+aws_region   = "us-east-1"
+project_name = "fashion-reco"
+environment  = "dev"
+
+# Replace with your GitHub org/user and repo
+github_org   = "YOUR_GITHUB_USERNAME"
+github_repo  = "fashion-recommendation-system"
+github_branch = "main"
+
+# Optional — set after creating a Terraform state bucket + DynamoDB lock table
+# terraform_state_bucket     = "fashion-reco-dev-terraform-state"
+# terraform_state_lock_table = "fashion-reco-dev-terraform-locks"
+
+tags = {
+  Owner = "rahul.vansh"
+}

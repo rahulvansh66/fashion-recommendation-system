@@ -1,6 +1,5 @@
 # Two-tower training, HPO, and SageMaker jobs
-tensorflow>=2.15,<2.17
-tensorflow-recommenders>=0.7.3
+torch>=2.2,<2.5
 pandas>=2.0
 pyarrow>=14.0
 PyYAML>=6.0
