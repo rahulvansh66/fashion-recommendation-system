@@ -8,9 +8,9 @@ learning_rate: 0.01
 weight_decay: 0.001
 
 # FR-BATCH-02 snap-date temporal split (v1-requirements.md).
-# Each snap defines: feature cutoff (t_dat <= snap_date) and a 7-day forward
-# label window (snap_date+1 .. snap_date+7).  Train rows from both train snaps
-# are stacked; val/test/drift snaps are evaluated only, never passed to fit().
+# Anchor features (dataset/{name}/features/) are partitioned by snap_date.
+# Train/val/test rows are selected by matching snap_date to the snaps below;
+# only label==1 purchase positives are used for retrieval training.
 temporal_split:
   train_snaps:
     - snap_date: "2020-03-31"

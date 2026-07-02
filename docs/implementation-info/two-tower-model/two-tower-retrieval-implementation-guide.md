@@ -91,16 +91,16 @@ MLflow tracks runs whenever `train.py` or `run_two_tower_study.py` runs with `ML
 ### 4.1 Source path
 
 ```
-s3://{S3_BUCKET}/dataset/sample_2000_users/features/transactions/
+s3://{S3_BUCKET}/dataset/sample_2000_users/features/
 ```
 
-Local dev mirror:
+Local dev mirror (Hive-partitioned by `snap_date`):
 
 ```
-s3/dataset/sample_2000_users/features/transactions/
+s3/dataset/sample_2000_users/features/
 ```
 
-Produced by `notebooks/feature_engineering.ipynb` (or `pipelines/run_feature_pipeline.py` when wired).
+Produced by `notebooks/03_feature_engineering.ipynb` (or `pipelines/run_feature_pipeline.py` when wired).
 
 ### 4.2 Required columns (canonical names)
 
@@ -123,7 +123,7 @@ No renaming at load time. These are the columns the model consumes:
 | `item_category` | string | One-hot + Dense (garment-group equivalent) |
 | `index_group_name` | string | One-hot + Dense |
 
-Also required for splitting: `t_dat`.
+Also required for splitting: `snap_date` (and `label` on anchor rows — only `label == 1` positives are kept after split).
 
 Validation is enforced in `split.load_transactions()` and `notebooks/utils/two_tower_training_helpers.verify_schema()`.
 
@@ -133,9 +133,9 @@ Implemented in `src/.../two_tower/split.py`. The **snap-date + 7-day forward lab
 
 | Role | Snap dates | Rows selected |
 |------|------------|---------------|
-| **Train** | `2020-03-31`, `2020-04-07` | `t_dat` in either train snap's label window; stacked |
-| **Val** | `2020-04-14`, `2020-04-28` | `t_dat` in either val snap's label window; stacked |
-| **Test** | `2020-05-15` | `t_dat` in `[2020-05-16, 2020-05-22]` |
+| **Train** | `2020-03-31`, `2020-04-07` | Rows with matching `snap_date`; `label == 1` only; stacked |
+| **Val** | `2020-04-14`, `2020-04-28` | Same rule for val snaps; stacked |
+| **Test** | `2020-05-15` | Same rule for test snap |
 
 Snap dates and label windows are configured in `configs/models/two_tower.yaml` under `temporal_split`.
 ### 4.4 Staged splits for SageMaker

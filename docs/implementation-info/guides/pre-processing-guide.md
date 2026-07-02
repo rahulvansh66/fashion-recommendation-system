@@ -219,11 +219,11 @@ Columns used for joins and sampling but **not** passed as model inputs: `custome
 
 ### Retrieval-specific formatting (two-tower)
 
-After clean transactions and article joins (retrieval uses purchase rows as positives, not pair classification):
+After anchor features from notebook 03 (`features/`, partitioned by `snap_date`):
 
 | Step | Rule |
 |------|------|
-| Temporal split | Keep rows whose `t_dat` falls in each snap's **label window** for train/val/test roles |
+| Temporal split | Keep rows whose `snap_date` matches train/val/test snaps in `configs/models/two_tower.yaml`; retain **`label == 1`** purchase positives only |
 | Query-side fields | `customer_id`, `age`, `txn_month_sin`, `txn_month_cos` |
 | Candidate-side fields | `article_id`, `garment_group_name` (or `item_category`), `index_group_name` |
 | Vocabulary | Build string-to-index maps on **training rows only**; index `0` = unknown |

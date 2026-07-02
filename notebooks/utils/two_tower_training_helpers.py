@@ -21,7 +21,7 @@ REQUIRED_COLUMNS = [
     "article_id",
     "item_category",
     "index_group_name",
-    "t_dat",
+    "snap_date",
 ]
 
 
@@ -41,8 +41,19 @@ def load_search_space_yaml(repo_root: Path | None = None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def resolve_features_path(repo_root: Path, fe_cfg: dict[str, Any]) -> Path:
+    """Return the Hive-partitioned features directory for the active dataset."""
+    return (
+        repo_root
+        / fe_cfg["local_s3_root"]
+        / "dataset"
+        / fe_cfg["dataset_name"]
+        / "features"
+    )
+
+
 def verify_schema(df: pd.DataFrame) -> None:
-    """Ensure the transactions feature frame has required columns."""
+    """Ensure the anchor feature frame has required model columns."""
     missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     if missing:
         raise ValueError(f"Missing columns (extend FE first): {missing}")
@@ -52,40 +63,53 @@ def apply_temporal_split(
     df: pd.DataFrame,
     temporal: dict,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """FR-BATCH-02 snap-date temporal split on ``t_dat``.
+    """FR-BATCH-02 snap-date temporal split on anchor feature rows.
 
-    Each role (train / val / test) is defined by one or more snap dicts with
-    ``label_start`` and ``label_end`` keys.  Rows are selected when ``t_dat``
-    falls inside any snap's label window for that role.  Train rows from all
-    train snaps are stacked into a single DataFrame.
+    Rows are assigned to train / val / test when ``snap_date`` matches a snap
+    key for that role in ``temporal``.  When ``label`` is present, only purchase
+    positives (``label == 1``) are kept for retrieval training.
 
-    Args:
-        df: Transaction DataFrame with a ``t_dat`` column.
-        temporal: Dict loaded from ``configs/models/two_tower.yaml``
-                  ``temporal_split`` section.  Expected keys:
-                  ``train_snaps``, ``val_snaps``, ``test_snaps``.
-
-    Returns:
-        Tuple of (train_df, val_df, test_df).
+    Legacy tables with ``t_dat`` (and no ``snap_date``) fall back to label-window
+    selection on purchase dates.
     """
     work = df.copy()
-    work["t_dat"] = pd.to_datetime(work["t_dat"]).dt.normalize()
+    if "snap_date" in work.columns:
+        work["snap_date"] = pd.to_datetime(work["snap_date"]).dt.normalize()
 
-    def _collect(snaps: list) -> pd.DataFrame:
-        """Return rows whose t_dat falls in any snap's label window."""
-        if not snaps:
-            return work.iloc[0:0].copy()
-        mask = pd.Series(False, index=work.index)
-        for snap in snaps:
-            lo = pd.Timestamp(snap["label_start"])
-            hi = pd.Timestamp(snap["label_end"])
-            mask |= (work["t_dat"] >= lo) & (work["t_dat"] <= hi)
-        return work[mask].copy()
+        def _collect(snaps: list) -> pd.DataFrame:
+            if not snaps:
+                return work.iloc[0:0].copy()
+            snap_dates = {pd.Timestamp(s["snap_date"]).normalize() for s in snaps}
+            mask = work["snap_date"].isin(snap_dates)
+            subset = work[mask].copy()
+            if "label" in subset.columns:
+                subset = subset[subset["label"] == 1].copy()
+            return subset
 
-    train_df = _collect(temporal.get("train_snaps", []))
-    val_df = _collect(temporal.get("val_snaps", []))
-    test_df = _collect(temporal.get("test_snaps", []))
-    return train_df, val_df, test_df
+        train_df = _collect(temporal.get("train_snaps", []))
+        val_df = _collect(temporal.get("val_snaps", []))
+        test_df = _collect(temporal.get("test_snaps", []))
+        return train_df, val_df, test_df
+
+    if "t_dat" in work.columns:
+        work["t_dat"] = pd.to_datetime(work["t_dat"]).dt.normalize()
+
+        def _collect_legacy(snaps: list) -> pd.DataFrame:
+            if not snaps:
+                return work.iloc[0:0].copy()
+            mask = pd.Series(False, index=work.index)
+            for snap in snaps:
+                lo = pd.Timestamp(snap["label_start"])
+                hi = pd.Timestamp(snap["label_end"])
+                mask |= (work["t_dat"] >= lo) & (work["t_dat"] <= hi)
+            return work[mask].copy()
+
+        train_df = _collect_legacy(temporal.get("train_snaps", []))
+        val_df = _collect_legacy(temporal.get("val_snaps", []))
+        test_df = _collect_legacy(temporal.get("test_snaps", []))
+        return train_df, val_df, test_df
+
+    raise ValueError("Temporal split requires a 'snap_date' or 't_dat' column")
 
 
 def new_run_id() -> str:

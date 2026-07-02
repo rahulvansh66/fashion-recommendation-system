@@ -1,13 +1,15 @@
 """Pandas-only data loading and temporal splits (no TensorFlow dependency).
 
-Implements the FR-BATCH-02 snap-date + forward label window scheme:
-  - Each snap defines a feature cutoff (t_dat <= snap_date) and a 7-day label
-    window (snap_date + 1 .. snap_date + 7).
-  - Train rows come from purchases in any train snap's label window (stacked).
-  - Val rows come from purchases in any val snap's label window (stacked).
-  - Test rows come from purchases in the test snap's label window.
-  - Drift snaps are not returned by apply_temporal_split; use apply_drift_splits
-    separately for monitoring.
+Implements FR-BATCH-02 snap-date temporal splits for two data layouts:
+
+1. **Anchor features** (current FE output): Hive-partitioned ``features/`` table
+   with ``snap_date`` and optional ``label``.  Rows are assigned to train/val/test
+   by matching ``snap_date`` to ``temporal_split`` snap keys.  When ``label`` is
+   present, only ``label == 1`` purchase positives are kept (implicit retrieval
+   pairs).
+
+2. **Legacy purchase rows**: transaction table with ``t_dat``; rows are selected
+   when ``t_dat`` falls inside a snap's forward label window.
 """
 
 from __future__ import annotations
@@ -22,22 +24,28 @@ CANDIDATE_FEATURES = ["article_id", "item_category", "index_group_name"]
 ALL_FEATURES = QUERY_FEATURES + CANDIDATE_FEATURES
 
 
+def _rows_for_snap_dates(df: pd.DataFrame, snaps: List[dict]) -> pd.DataFrame:
+    """Return anchor rows whose ``snap_date`` matches any snap in ``snaps``.
+
+    When a ``label`` column exists, keep only purchase positives (``label == 1``).
+    """
+    if not snaps:
+        return df.iloc[0:0].copy()
+    snap_dates = {pd.Timestamp(s["snap_date"]).normalize() for s in snaps}
+    mask = pd.to_datetime(df["snap_date"]).dt.normalize().isin(snap_dates)
+    subset = df[mask].copy()
+    if "label" in subset.columns:
+        subset = subset[subset["label"] == 1].copy()
+    return subset
+
+
 def _rows_in_label_windows(
     df: pd.DataFrame,
     snaps: List[dict],
 ) -> pd.DataFrame:
-    """Return all rows whose ``t_dat`` falls inside any snap's label window.
-
-    Args:
-        df: Transaction DataFrame with a normalised ``t_dat`` column.
-        snaps: List of dicts with keys ``label_start`` and ``label_end``
-               (ISO date strings).
-
-    Returns:
-        Subset of ``df`` matching any label window, preserving order.
-    """
+    """Return rows whose ``t_dat`` falls inside any snap's label window."""
     if not snaps:
-        return df.iloc[0:0].copy()  # empty DataFrame with same schema
+        return df.iloc[0:0].copy()
     combined_mask = pd.Series(False, index=df.index)
     for snap in snaps:
         lo = pd.Timestamp(snap["label_start"])
@@ -50,49 +58,56 @@ def apply_temporal_split(
     df: pd.DataFrame,
     temporal: dict,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Split transactions into train / val / test by FR-BATCH-02 snap-date scheme.
-
-    Each role is defined by one or more (snap_date, label_start, label_end)
-    triples in ``temporal``.  A row belongs to a role when its ``t_dat``
-    falls inside any snap's label window for that role.  Train rows from all
-    train snaps are stacked into a single DataFrame; val and test follow the
-    same logic.
+    """Split feature rows into train / val / test by FR-BATCH-02 snap-date scheme.
 
     Args:
-        df: Transaction DataFrame.  Must contain ``t_dat`` and all columns in
-            ``ALL_FEATURES``.
+        df: Feature DataFrame with ``snap_date`` (anchor layout) or ``t_dat``
+            (legacy purchase rows).  Must contain all columns in ``ALL_FEATURES``.
         temporal: Dict loaded from ``configs/models/two_tower.yaml``
-                  ``temporal_split`` section.  Expected keys:
-                  ``train_snaps``, ``val_snaps``, ``test_snaps``.
+                  ``temporal_split`` section.
 
     Returns:
         Tuple of (train_df, val_df, test_df).
     """
     work = df.copy()
-    work["t_dat"] = pd.to_datetime(work["t_dat"]).dt.normalize()
+    if "snap_date" in work.columns:
+        work["snap_date"] = pd.to_datetime(work["snap_date"]).dt.normalize()
+        train_df = _rows_for_snap_dates(work, temporal.get("train_snaps", []))
+        val_df = _rows_for_snap_dates(work, temporal.get("val_snaps", []))
+        test_df = _rows_for_snap_dates(work, temporal.get("test_snaps", []))
+        return train_df, val_df, test_df
 
-    train_df = _rows_in_label_windows(work, temporal.get("train_snaps", []))
-    val_df = _rows_in_label_windows(work, temporal.get("val_snaps", []))
-    test_df = _rows_in_label_windows(work, temporal.get("test_snaps", []))
-    return train_df, val_df, test_df
+    if "t_dat" in work.columns:
+        work["t_dat"] = pd.to_datetime(work["t_dat"]).dt.normalize()
+        train_df = _rows_in_label_windows(work, temporal.get("train_snaps", []))
+        val_df = _rows_in_label_windows(work, temporal.get("val_snaps", []))
+        test_df = _rows_in_label_windows(work, temporal.get("test_snaps", []))
+        return train_df, val_df, test_df
+
+    raise ValueError("Temporal split requires a 'snap_date' or 't_dat' column")
 
 
 def apply_drift_splits(
     df: pd.DataFrame,
     temporal: dict,
 ) -> list[tuple[str, pd.DataFrame]]:
-    """Return one DataFrame per drift snap (for monitoring / decay plotting).
-
-    Args:
-        df: Transaction DataFrame with a normalised ``t_dat`` column.
-        temporal: Dict with ``drift_snaps`` list.
-
-    Returns:
-        List of ``(snap_date_str, drift_df)`` tuples in chronological order.
-    """
+    """Return one DataFrame per drift snap (for monitoring / decay plotting)."""
     work = df.copy()
-    work["t_dat"] = pd.to_datetime(work["t_dat"]).dt.normalize()
+    if "snap_date" in work.columns:
+        work["snap_date"] = pd.to_datetime(work["snap_date"]).dt.normalize()
+        result = []
+        for snap in temporal.get("drift_snaps", []):
+            snap_ts = pd.Timestamp(snap["snap_date"]).normalize()
+            drift_df = work[work["snap_date"] == snap_ts].copy()
+            if "label" in drift_df.columns:
+                drift_df = drift_df[drift_df["label"] == 1].copy()
+            result.append((snap["snap_date"], drift_df))
+        return result
 
+    if "t_dat" not in work.columns:
+        raise ValueError("Drift split requires a 'snap_date' or 't_dat' column")
+
+    work["t_dat"] = pd.to_datetime(work["t_dat"]).dt.normalize()
     result = []
     for snap in temporal.get("drift_snaps", []):
         lo = pd.Timestamp(snap["label_start"])
@@ -103,17 +118,7 @@ def apply_drift_splits(
 
 
 def load_transactions(path: str | Path) -> pd.DataFrame:
-    """Load transaction feature Parquet (file or directory).
-
-    Args:
-        path: Path to a single Parquet file or a directory of Parquet files.
-
-    Returns:
-        DataFrame with all required feature columns present.
-
-    Raises:
-        ValueError: If any required column is missing.
-    """
+    """Load transaction feature Parquet (file or Hive-partitioned directory."""
     df = pd.read_parquet(path)
     missing = [c for c in ALL_FEATURES if c not in df.columns]
     if missing:
@@ -122,18 +127,7 @@ def load_transactions(path: str | Path) -> pd.DataFrame:
 
 
 def build_vocabularies(train_df: pd.DataFrame) -> dict[str, list[str]]:
-    """Build train-only vocabularies for embedding and one-hot layers.
-
-    Vocabularies are derived from the stacked train split only so that
-    val/test IDs do not leak into the embedding lookup tables.
-
-    Args:
-        train_df: Stacked train DataFrame (rows from all train snaps).
-
-    Returns:
-        Dict with keys ``user_ids``, ``item_ids``, ``item_categories``,
-        ``index_groups`` — each a list of unique string values.
-    """
+    """Build train-only vocabularies for embedding and one-hot layers."""
     return {
         "user_ids": train_df["customer_id"].astype(str).unique().tolist(),
         "item_ids": train_df["article_id"].astype(str).unique().tolist(),

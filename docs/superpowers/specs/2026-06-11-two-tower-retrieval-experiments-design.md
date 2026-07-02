@@ -19,7 +19,7 @@ related_docs:
 
 Implement Stage-1 **two-tower retrieval** training with **AWS Managed MLflow** experiment tracking and **Optuna** hyperparameter search. Work is driven by `notebooks/two_tower_retrieval_experiments.ipynb` and supporting pipeline scripts; training compute runs on **SageMaker Training Jobs** (one job per Optuna trial), orchestrated by a **SageMaker Processing** job.
 
-**Data:** `s3://{S3_BUCKET}/dataset/sample_2000_users/features/transactions/` (local mirror: `s3/dataset/sample_2000_users/features/transactions/`).
+**Data:** `s3://{S3_BUCKET}/dataset/sample_2000_users/features/` (local mirror: `s3/dataset/sample_2000_users/features/`, Hive-partitioned by `snap_date`).
 
 **Reference implementation:** Architecture, default hyperparameters, in-batch negative strategy, and evaluation approach from [`two-tower-retrieval-training-guide.md`](../../implementation-info/two-tower-model/two-tower-retrieval-training-guide.md), with **log-q popularity correction** from `tmp/recsys-v2/two-tower-cg/` to debias in-batch negatives.
 
@@ -87,7 +87,7 @@ flowchart TB
 ### Input path
 
 ```
-s3://{S3_BUCKET}/dataset/sample_2000_users/features/transactions/
+s3://{S3_BUCKET}/dataset/sample_2000_users/features/
 ```
 
 ### Model input columns
