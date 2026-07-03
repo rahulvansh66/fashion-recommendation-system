@@ -1,9 +1,9 @@
-# Fashion Recommendation System
+# Multi-Stage H&M Fashion Recommendation System
 
 <!-- Building a two-stage recommendation system that predicts purchase likelihood over the next 7 days, deployed on AWS. -->
 
 <!-- Personalized top-15 fashion recommendations: -->
-Building a personalized two-stage recommendation system that predicts which products a user may buy in the next 7 days using Two-Tower candidate retrieval and XGBoost ranking, deployed on AWS.
+Building a personalized two-stage recommendation system for next 7-day purchase prediction using a Two-Tower model for candidate retrieval and XGBoost for ranking, deployed on AWS.
 
 The system learns users' shopping behavior from purchase history and engineered time-series features to generate personalized recommendations.
 
