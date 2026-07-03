@@ -10,7 +10,14 @@
 .env.local
 *.pem
 
-# Ignore large data files or logs
-dataset/
+# Terraform local state and secrets
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+infra/bootstrap/terraform.tfvars
+infra/bootstrap/iam-outputs.json
 
 tmp/
+dataset/
+s3/

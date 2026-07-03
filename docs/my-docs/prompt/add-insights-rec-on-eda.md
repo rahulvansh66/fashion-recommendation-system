@@ -1,0 +1,3 @@
+review notebook @notebooks/01_raw_data_eda_and_cleaning.ipynb  and  refer @docs/implementation-info/guides/eda-preprocessing-guide.md@docs/implementation-info/guides/implementation-sequence.md , write insights and recommendations after for each plot by adding markdown cell, also at the end add new cell write final overall insights and recommendations.
+
+update `7. Preprocessing Strategies` any of  insights or recommendations are relevent for  adding Preprocessing Strategies that should be done in future.

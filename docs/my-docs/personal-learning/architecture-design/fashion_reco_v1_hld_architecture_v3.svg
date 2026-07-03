@@ -235,7 +235,7 @@
 <image xlink:href="/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/resources/aws/ml/sagemaker.png" width="100.8px" height="100.8px" preserveAspectRatio="xMinYMin meet" x="2578.28" y="-1682.9"/>
 <text xml:space="preserve" text-anchor="middle" x="2628.68" y="-1566.65" font-family="Arial" font-size="12.00" fill="#2d3436">Stage 3</text>
 <text xml:space="preserve" text-anchor="middle" x="2628.68" y="-1552.4" font-family="Arial" font-size="12.00" fill="#2d3436">SageMaker</text>
-<text xml:space="preserve" text-anchor="middle" x="2628.68" y="-1538.15" font-family="Arial" font-size="12.00" fill="#2d3436">CatBoost ranker</text>
+<text xml:space="preserve" text-anchor="middle" x="2628.68" y="-1538.15" font-family="Arial" font-size="12.00" fill="#2d3436">XGBoost ranker</text>
 </g>
 <!-- 85d2941f2a7f4659b92422de110e3602&#45;&gt;c49db9bfce0944adb902e530023ac645 -->
 <g id="edge12" class="edge">
@@ -338,7 +338,7 @@
 <title>e2002a7a19a94dc190189fda8468566a</title>
 <image xlink:href="/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/resources/aws/ml/sagemaker-training-job.png" width="100.8px" height="100.8px" preserveAspectRatio="xMinYMin meet" x="961.9" y="-1357.9"/>
 <text xml:space="preserve" text-anchor="middle" x="1012.3" y="-1241.8" font-family="Arial" font-size="12.00" fill="#2d3436">SageMaker Training</text>
-<text xml:space="preserve" text-anchor="middle" x="1012.3" y="-1227.55" font-family="Arial" font-size="12.00" fill="#2d3436">two&#45;tower + CatBoost</text>
+<text xml:space="preserve" text-anchor="middle" x="1012.3" y="-1227.55" font-family="Arial" font-size="12.00" fill="#2d3436">two&#45;tower + XGBoost</text>
 </g>
 <!-- 95d503972ee54efc9f7f295e5436dd22&#45;&gt;e2002a7a19a94dc190189fda8468566a -->
 <g id="edge24" class="edge">

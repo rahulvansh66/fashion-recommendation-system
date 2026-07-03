@@ -47,7 +47,7 @@ This document defines the complete functional and non-functional requirements fo
 
 ### 1.2 Background
 
-The system serves a personalized **top-10** list of fashion articles each customer is **likely to purchase soon**, based on past purchase history and precomputed user/item features. Offline, **“soon”** is defined by purchases occurring within a future **label window** (val/test splits in FR-BATCH-02); online, the ranker scores purchase likelihood as of a feature-cutoff date. V1 is built as a learning-grade, production-pattern system: it demonstrates real-world ML engineering patterns (two-stage retrieval + ranking, result caching, circuit breakers, canary deployment) while remaining deployable on a $30–40 total budget.
+The system serves a personalized **top-10** list of fashion articles each customer is **likely to purchase soon**, based on past purchase history and precomputed user/item features. Offline, **“soon”** is defined by purchases occurring within a future **label window** (val/test splits in FR-BATCH-02); online, the ranker scores purchase likelihood using precomputed features and request-time context (`current_date`). V1 is built as a learning-grade, production-pattern system: it demonstrates real-world ML engineering patterns (two-stage retrieval + ranking, result caching, circuit breakers, canary deployment) while remaining deployable on a $30–40 total budget.
 
 ### 1.3 Requirement Priority Convention
 
@@ -205,27 +205,27 @@ Stage 2 must remove from the candidate set any article IDs present in the Redis 
 
 ---
 
-#### FR-PIPE-05 — Stage 3: Ranking (CatBoost)
+#### FR-PIPE-05 — Stage 3: Ranking (XGBoost)
 **Priority:** MUST
 
-Stage 3 must invoke the SageMaker `catboost-ranker` endpoint with a batch of feature vectors (one per candidate article). Each vector must include: user features, item features, and cross features (preferred category vs. item category, price affinity vs. item price, days since last purchase in category). The endpoint must return candidates sorted by predicted purchase probability.
+Stage 3 must invoke the SageMaker `xgboost-ranker` endpoint with a batch of feature vectors (one per candidate article). Each vector must include: user features, item features, and cross features (preferred category vs. item category, price affinity vs. item price, days since last purchase in category). The endpoint must return candidates sorted by predicted purchase probability.
 
 **Acceptance criteria:**
 - Item features are fetched from Redis via a single `HMGET` call covering all remaining candidates.
-- Cross features are computed in the FastAPI application before the CatBoost invocation.
-- CatBoost returns a score per candidate, and candidates are sorted descending by score.
+- Cross features are computed in the FastAPI application before the XGBoost invocation.
+- XGBoost returns a score per candidate, and candidates are sorted descending by score.
 
 ---
 
 #### FR-PIPE-06 — Stage 4: Diversity-Aware Reorder
 **Priority:** MUST
 
-Stage 4 must apply the following reorder rule to the CatBoost-ranked candidates before writing to cache:
+Stage 4 must apply the following reorder rule to the XGBoost-ranked candidates before writing to cache:
 
 ```
-positions 1–4   → top 4 by raw CatBoost score
+positions 1–4   → top 4 by raw XGBoost score
 positions 5–6   → top 2 by diversity_score relative to positions 1–4
-positions 7–10  → next 4 by raw CatBoost score (excluding those in positions 5–6)
+positions 7–10  → next 4 by raw XGBoost score (excluding those in positions 5–6)
 ```
 
 The diversity score formula is:
@@ -239,7 +239,7 @@ diversity_score(c, S) = w1 * categorical_diff(c.product_type_no, S)
 Where `categorical_diff` returns 1 if the value differs from all items in set S, and `bucket_diff` normalises the minimum price-bucket distance. Default weights `w1 = w2 = w3 = 1.0` must be configurable via Lambda environment variables without redeployment.
 
 **Acceptance criteria:**
-- Positions 1–4 always reflect the top-4 CatBoost-ranked items.
+- Positions 1–4 always reflect the top-4 XGBoost-ranked items.
 - Positions 5–6 introduce at least one item from a different `product_type_no` or `colour_group_code` than positions 1–4 (when such diversity exists in the candidate pool).
 - Weights are read from environment variables at cold-start time; changing them requires only an environment variable update.
 
@@ -261,7 +261,7 @@ The pipeline must enforce two independent rate-limit layers:
 #### FR-PIPE-08 — Circuit Breakers & Fallbacks
 **Priority:** MUST
 
-Every downstream dependency call (Redis, SageMaker user-tower, FAISS Lambda, SageMaker CatBoost) must be wrapped in a circuit breaker. The breaker trips after 5 failures within 30 seconds and remains open for 30 seconds before allowing a single probe request.
+Every downstream dependency call (Redis, SageMaker user-tower, FAISS Lambda, SageMaker XGBoost) must be wrapped in a circuit breaker. The breaker trips after 5 failures within 30 seconds and remains open for 30 seconds before allowing a single probe request.
 
 Fallback behaviour per failing dependency:
 
@@ -270,7 +270,7 @@ Fallback behaviour per failing dependency:
 | Redis (cache or feature)    | Skip cache; continue pipeline; emit CloudWatch alarm.                          |
 | SageMaker user-tower        | Use `embedding:user:{customer_id}` from Redis (24-hour TTL). If absent, serve popular items. |
 | FAISS Lambda                | Return `popular:items:by_category:{cat}` from Redis.                           |
-| SageMaker CatBoost          | Return FAISS top-K ordered by raw similarity score; still apply diversity reorder. |
+| SageMaker XGBoost          | Return FAISS top-K ordered by raw similarity score; still apply diversity reorder. |
 | All ML dependencies open    | Return `popular:items:top100` from Redis with `degraded: true` in the response JSON. |
 
 **Acceptance criteria:**
@@ -399,10 +399,10 @@ The system must serve a FAISS index as a Lambda function. The Lambda must load t
 
 ---
 
-#### FR-ML-03 — CatBoost Ranking
+#### FR-ML-03 — XGBoost Ranking
 **Priority:** MUST
 
-The system must serve a CatBoost ranking model via a dedicated SageMaker Endpoint (`catboost-ranker`). The endpoint must accept a batch of feature vectors (one per candidate article) and return a predicted purchase probability per candidate.
+The system must serve a XGBoost ranking model via a dedicated SageMaker Endpoint (`xgboost-ranker`). The endpoint must accept a batch of feature vectors (one per candidate article) and return a predicted purchase probability per candidate.
 
 **Acceptance criteria:**
 - Batch input (up to 100 candidates) returns the same number of scores.
@@ -443,37 +443,45 @@ A Glue PySpark job must derive user and item features from the `clean/` zone and
 Required user features: purchase frequency, average price paid, top-N purchased categories, recency (days since last transaction).
 Required item features: popularity score (transaction count), days since first sold.
 
-**Temporal split (shared with sampling, feature engineering, and model training):**
+**Temporal split — snap-date + forward label week (shared with feature engineering and model training):**
 
-| Split | Date range | Rule |
-|-------|------------|------|
-| **Train** | start → **2020-03-31** | `t_dat <= 2020-03-31` |
-| **Val** | **2020-04-01** → **2020-05-15** | `2020-04-01 <= t_dat <= 2020-05-15` |
-| **Test** | **2020-05-16** → **2020-06-30** | `2020-05-16 <= t_dat <= 2020-06-30` |
-| **Drift 1** | **2020-07-01** → **2020-07-31** | Model Monitor only (not used for model selection) |
-| **Drift 2** | **2020-08-01** → **2020-08-31** | Model Monitor only |
-| **Drift 3** | **2020-09-01** → **2020-09-30** | Model Monitor only |
+Each split is defined by a **snap date** (feature cutoff: all features use `t_dat <= snap_date`) and a **label window** (the 7 calendar days immediately after: `snap_date + 1` → `snap_date + 7`). Train rows from all train snaps are stacked into a single training dataset; val/test/drift snaps are never used in `fit()`.
 
-**Feature cutoff** (inclusive end of transaction history used to compute features — no label leakage):
+| Snap date | Role | Feature cutoff (`t_dat <=`) | Label window (`t_dat` range) |
+|-----------|------|------------------------------|------------------------------|
+| `2020-03-24` | **Train 0** | 2020-03-24 | 2020-03-25 – 2020-03-31 |
+| `2020-03-31` | **Train 1** | 2020-03-31 | 2020-04-01 – 2020-04-07 |
+| `2020-04-07` | **Train 2** | 2020-04-07 | 2020-04-08 – 2020-04-14 |
+| `2020-04-14` | **Val 1** | 2020-04-14 | 2020-04-15 – 2020-04-21 |
+| `2020-04-28` | **Val 2** | 2020-04-28 | 2020-04-29 – 2020-05-05 |
+| `2020-05-15` | **Test** | 2020-05-15 | 2020-05-16 – 2020-05-22 |
+| `2020-05-31` | **Drift 1** | 2020-05-31 | 2020-06-01 – 2020-06-07 |
+| `2020-06-30` | **Drift 2** | 2020-06-30 | 2020-07-01 – 2020-07-07 |
+| `2020-07-31` | **Drift 3** | 2020-07-31 | 2020-08-01 – 2020-08-07 |
+| `2020-08-31` | **Drift 4** | 2020-08-31 | 2020-09-01 – 2020-09-07 |
+| `2020-09-15` | **Drift 5** | 2020-09-15 | 2020-09-16 – 2020-09-22 |
 
-| Split / role | Feature cutoff |
-|--------------|----------------|
-| Train | `2020-03-31` |
-| Val | `2020-03-31` |
-| Test | `2020-05-15` |
+**Split roles:**
+
+| Role | Snap dates | Used in `fit()`? | Purpose |
+|------|------------|------------------|---------|
+| **Train** | Mar 31, Apr 7 | Yes | Learn P(purchase next week \| features@snap) |
+| **Val** | Apr 14, Apr 28 | No | Early stopping, hyperparameter tuning |
+| **Test** | May 15 | No | Final acceptance metrics (reported once) |
+| **Drift** | May 31 → Sep 15 (5 snaps) | No | Score-only — plot metrics over time to detect decay |
 
 **Ranker labels** (binary pair classification; see [`ranking-model-training-guide.md`](../../implementation-info/guides/ranking-model-training-guide.md) for implementation detail):
 
-- **Positive:** each `(customer_id, article_id)` purchase in the split's label window (train window = train dates; val/test windows = val/test dates above).
-- **Negative:** **5 window-aware negatives per positive** — for the same customer, sample articles the customer did **not** purchase in that label window and had **not** purchased before the split's feature cutoff (`seen` exclusion).
-- **Ratio:** 1 positive : 5 negatives; `scale_pos_weight = 5` (or equivalent class weighting).
+- **Positive:** each `(customer_id, article_id)` purchase with `t_dat` inside the snap's label window. One row per `(customer_id, article_id, snap_date)` triple; `SOLD = 1`.
+- **Negative:** **10 window-aware negatives per positive** — for the same customer and snap, sample articles the customer did **not** purchase in that label window and had **not** purchased before the snap date (`seen` exclusion). `SOLD = 0`.
+- **Ratio:** 1 positive : 10 negatives; `scale_pos_weight = 10` (or equivalent class weighting).
+- Negatives must be drawn **per snap date** — do not pool across snaps.
 
 Full feature definitions: [`features-eng.md`](../../implementation-info/guides/features-eng.md).
 
 **Acceptance criteria:**
 - Feature output is written to `features/users/customer_id={cid}/` and `features/items/article_id={aid}/` as Parquet.
-- All user features are computable from the `clean/` zone (`customers` and pre-cutoff `transactions`) alone.
-- No feature uses transactions with `t_dat` after the feature cutoff for that split (no label leakage).
+- All user features are computable from the `clean/` zone (`customers` and `transactions`) alone.
 
 ---
 
@@ -496,9 +504,9 @@ A Glue PySpark job (daily, 03:00 UTC) must write the following Redis keys from f
 **Priority:** MUST
 
 The ML pipeline must execute the following DAG:
-1. SageMaker Processing job: build training tables from `features/` and label windows per FR-BATCH-02 (train / val / test splits; 1:5 window-aware negatives for the ranker).
+1. SageMaker Processing job: build training tables from `features/` and label windows per FR-BATCH-02 (train / val / test splits; 1:10 window-aware negatives for the ranker).
 2. SageMaker Training job: train the Two-Tower model.
-3. SageMaker Training job: train the CatBoost ranker (parallel with step 2).
+3. SageMaker Training job: train the XGBoost ranker (parallel with step 2).
 4. SageMaker Processing job: evaluate both models on the val and test holdout sets.
 5. Conditional gate: proceed only if `recall@100 > baseline`, ranker `AUC-PR > baseline` on the test set, and `hit_rate@10 > baseline` on the test set (any test-window purchase appears in the served top-10 list per user).
 6. Register models in SageMaker Model Registry.
@@ -517,11 +525,23 @@ The ML pipeline must execute the following DAG:
 #### FR-BATCH-05 — Drift Monitoring
 **Priority:** SHOULD
 
-SageMaker Model Monitor must run daily (04:00 UTC) to compare live inference data against the training baseline for both the user-tower and CatBoost endpoints. Offline drift reference slices use the **Drift 1–3** date ranges in FR-BATCH-02 (`2020-07-01`–`2020-09-30`); these slices are for monitoring only and must not be used for hyperparameter tuning or model promotion gates.
+SageMaker Model Monitor must run daily (04:00 UTC) to compare live inference data against the training baseline for both the user-tower and XGBoost endpoints. Offline drift reference slices use the **5 drift snap dates** in FR-BATCH-02 (`2020-05-31`, `2020-06-30`, `2020-07-31`, `2020-08-31`, `2020-09-15`); each drift snap’s label window provides one score-only evaluation point. These slices are for monitoring only and must not be used for hyperparameter tuning or model promotion gates. Plot metrics across D1 → D5 to visualise decay as the gap from training grows.
 
 **Acceptance criteria:**
 - Model Monitor baseline is established on first model deployment.
 - A drift score above threshold triggers an SNS alarm.
+
+---
+
+#### FR-BATCH-06 — Experiment Tracking & Hyperparameter Tuning
+**Priority:** MUST
+
+The system must use Optuna for hyperparameter optimization (HPO) and AWS Managed MLflow for experiment tracking during the R&D/HPO phase. Optuna must use a persistent SQLite database on EBS to allow easy export/import to a local MLflow server.
+
+**Acceptance criteria:**
+- Optuna trials are tracked in AWS Managed MLflow.
+- Optuna study persistence is backed by SQLite on EBS.
+- The best hyperparameters from the HPO phase are frozen into configuration files (`configs/models/*.yaml`) for use by the weekly SageMaker Pipeline (which does not run Optuna).
 
 ---
 
@@ -607,7 +627,7 @@ End-to-end recommendation latency for a cache-miss request with all downstream c
 | Stage 1: FAISS Lambda (warm)       | 15 ms  |
 | Stage 2: filter (Redis SMEMBERS)   | 5 ms   |
 | Stage 3: item features bulk read   | 5 ms   |
-| Stage 3: SageMaker CatBoost        | 70 ms  |
+| Stage 3: SageMaker XGBoost        | 70 ms  |
 | Stage 4: diversity reorder         | 2 ms   |
 | Cache write + serialise response   | 6 ms   |
 | **Total budget**                   | **190 ms** |
@@ -675,7 +695,7 @@ All stateless components (ECS Fargate application, FAISS Lambda) must scale hori
 | Component                  | Min | Max  | Trigger               |
 |----------------------------|-----|------|-----------------------|
 | SageMaker user-tower       | 1   | 4    | 1,000 invocations/min |
-| SageMaker CatBoost         | 1   | 4    | 1,000 invocations/min |
+| SageMaker XGBoost         | 1   | 4    | 1,000 invocations/min |
 | FAISS Lambda               | 0   | 50   | Concurrency cap       |
 | ECS Fargate (application)  | 1   | 4    | CPU 70% or memory 80% |
 | Glue jobs                  | 2   | 10   | DPU auto-scaling      |
@@ -870,7 +890,7 @@ Every push to the `main` branch must trigger the full CI/CD pipeline (lint, unit
 |----------|------------------------------------------------------------------------------------------------------------|
 | CON-01   | The system must deploy entirely within a single AWS region (us-east-1) in v1.                              |
 | CON-02   | The development dataset is limited to ~1K stratified users (articles and transactions derived from sampled users) to control training cost.  |
-| CON-09   | All offline pipelines share one temporal convention (FR-BATCH-02): **train** `t_dat <= 2020-03-31`; **val** `2020-04-01`–`2020-05-15`; **test** `2020-05-16`–`2020-06-30`; **drift** `2020-07-01`–`2020-09-30` (monitoring only). Feature cutoffs: train/val `2020-03-31`, test `2020-05-15`. Ranker uses 1 positive : 5 window-aware negatives per split. |
+| CON-09   | All offline pipelines share one temporal convention (FR-BATCH-02): **snap-date + 7-day forward label window** scheme with 11 snaps (3 train: Mar 24 / Mar 31 / Apr 7; 2 val: Apr 14 / Apr 28; 1 test: May 15; 5 drift: May 31 → Sep 15). Ranker uses 1 positive : 10 window-aware negatives **per snap date**. |
 | CON-03   | No real user authentication infrastructure (Cognito, OAuth) is required for v1. `rr/rr` is the only valid credential. |
 | CON-04   | ECS Fargate tasks must use 0.5 vCPU / 1.0 GB sizing for the unified application. SageMaker endpoints must use `ml.t3.medium` instances unless a performance NFR cannot be satisfied at that sizing. |
 | CON-05   | The FAISS index must fit within Lambda's 10 GB memory limit (estimated < 300 MB for the full H&M dataset). |
@@ -931,7 +951,7 @@ The following items are explicitly deferred. They are documented here to prevent
 | FR-PIPE-02     | Stage 0: cache check                        | §9.2                     |
 | FR-PIPE-03     | Stage 1: retrieval                          | §9.3                     |
 | FR-PIPE-04     | Stage 2: filter                             | §9.4                     |
-| FR-PIPE-05     | Stage 3: CatBoost ranking                   | §9.5                     |
+| FR-PIPE-05     | Stage 3: XGBoost ranking                   | §9.5                     |
 | FR-PIPE-06     | Stage 4: diversity reorder                  | §9.6                     |
 | FR-PIPE-07     | Rate limiting (two layers)                  | §7                       |
 | FR-PIPE-08     | Circuit breakers & fallbacks                | §9.8                     |
@@ -945,13 +965,14 @@ The following items are explicitly deferred. They are documented here to prevent
 | FR-API-04      | `GET /recommendations/{id}`                 | §8.1, §9                 |
 | FR-ML-01       | Two-tower SageMaker endpoint                | §11.1                    |
 | FR-ML-02       | FAISS Lambda serving                        | §11.2                    |
-| FR-ML-03       | CatBoost SageMaker endpoint                 | §11.3                    |
+| FR-ML-03       | XGBoost SageMaker endpoint                 | §11.3                    |
 | FR-ML-04       | Zero-downtime FAISS index swap              | §11.2                    |
 | FR-BATCH-01    | Data preparation Glue job                   | §12.2                    |
 | FR-BATCH-02    | Feature engineering Glue job                | §12.2                    |
 | FR-BATCH-03    | Cache warm-up Glue job                      | §12.2                    |
 | FR-BATCH-04    | SageMaker ML training pipeline              | §12.3                    |
 | FR-BATCH-05    | Drift monitoring                            | §13.3                    |
+| FR-BATCH-06    | Experiment Tracking & HPO                   | §2.2                     |
 | FR-OBS-01      | CloudWatch alarms → SNS                     | §13.3                    |
 | FR-OBS-02      | Custom business metrics                     | §13.3                    |
 | FR-OBS-03      | X-Ray distributed tracing                  | §13.3                    |

@@ -1,6 +1,7 @@
-# Two-tower training, HPO, and SageMaker jobs
-tensorflow>=2.15,<2.17
-tensorflow-recommenders>=0.7.3
+# Two-tower + XGBoost training, HPO, and SageMaker jobs
+torch>=2.2,<2.5
+xgboost>=2.0
+scikit-learn>=1.4
 pandas>=2.0
 pyarrow>=14.0
 PyYAML>=6.0
@@ -9,3 +10,4 @@ optuna>=3.5
 sagemaker>=2.200
 boto3>=1.34
 psycopg2-binary>=2.9
+matplotlib>=3.8

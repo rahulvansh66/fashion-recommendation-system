@@ -42,7 +42,7 @@ The cache check comes first because the cheapest and fastest recommendation is t
 
 On a cache miss, the system fetches user features, sends them to a two-tower user model hosted on SageMaker, and receives a 256-dimensional user embedding. That embedding is sent to a FAISS Lambda, which searches the item vector index and returns the top candidate article IDs.
 
-Those candidates are not final recommendations yet. The pipeline removes anything the customer has already purchased, enriches the remaining candidates with user, item, and cross features, and sends the batch to a CatBoost ranker. CatBoost scores the candidates by predicted purchase probability.
+Those candidates are not final recommendations yet. The pipeline removes anything the customer has already purchased, enriches the remaining candidates with user, item, and cross features, and sends the batch to a XGBoost ranker. XGBoost scores the candidates by predicted purchase probability.
 
 The last step is a diversity-aware reorder. The top four positions stay focused on raw relevance. Positions five and six are allowed to introduce some variety based on product type, color group, and price bucket. The final positions return to the next strongest ranked items. It is a small rule, but it reflects a real product intuition: a recommendation list should not be ten near-duplicates.
 
@@ -52,7 +52,7 @@ The system separates retrieval from ranking because those jobs are different.
 
 The two-tower model is good at finding a broad set of likely items quickly. It maps users and items into the same embedding space, so FAISS can search for similar item vectors without scoring every article one by one.
 
-CatBoost then does the slower, more precise work on a much smaller candidate set. It can use richer features, including cross features like category match, price affinity, and recency signals. This two-stage shape is common in real recommender systems because it balances speed and quality.
+XGBoost then does the slower, more precise work on a much smaller candidate set. It can use richer features, including cross features like category match, price affinity, and recency signals. This two-stage shape is common in real recommender systems because it balances speed and quality.
 
 Trying to rank every item directly would be wasteful. Relying only on nearest-neighbor retrieval would leave quality on the table. The split gives each model a job it is suited for.
 
@@ -70,7 +70,7 @@ The offline side prepares everything the online path needs to stay fast.
 
 AWS Glue handles data preparation and feature engineering. It reads the raw H&M files, validates and deduplicates records, writes parquet outputs, builds user and item features, and refreshes Redis keys such as popular items, seen-item sets, and the six active users shown in the app.
 
-SageMaker Pipelines handles model training. The flow builds training tables, trains the two-tower model and CatBoost ranker, evaluates both models, registers approved versions, computes item embeddings, builds a FAISS index, and rolls new models out through canary deployment.
+SageMaker Pipelines handles model training. The flow builds training tables, trains the two-tower model and XGBoost ranker, evaluates both models, registers approved versions, computes item embeddings, builds a FAISS index, and rolls new models out through canary deployment.
 
 This keeps the request path lightweight. The online service should not be doing heavy feature engineering or model-building work while a user is waiting.
 
@@ -98,7 +98,7 @@ The project is not trying to be the cheapest possible toy demo. It is trying to 
 
 The serving path is designed to return something useful even when a dependency is unhealthy.
 
-Every downstream call is wrapped with a circuit breaker. If the user-tower endpoint fails, the system can use a cached user embedding or fall back to popular items. If FAISS fails, it can return popular items by category. If CatBoost fails, it can use the FAISS candidates ordered by similarity and still apply the diversity step. If multiple ML dependencies are unavailable, the response can degrade to popular items with a `degraded` flag.
+Every downstream call is wrapped with a circuit breaker. If the user-tower endpoint fails, the system can use a cached user embedding or fall back to popular items. If FAISS fails, it can return popular items by category. If XGBoost fails, it can use the FAISS candidates ordered by similarity and still apply the diversity step. If multiple ML dependencies are unavailable, the response can degrade to popular items with a `degraded` flag.
 
 That means failure is visible, but it does not have to become a blank page.
 

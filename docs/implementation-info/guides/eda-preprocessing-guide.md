@@ -110,9 +110,20 @@ Check:
 * interaction effects
 * leakage features that almost directly reveal target
 
+**Methods to measure relationships (Feature Selection):**
+
+*(Always check required assumptions before applying the respective hypothesis test or correlation metric!)*
+
+* **Linear/Monotonic vs. Target:** 
+  * Use **Pearson Correlation** for strict linear relationships (assumes normality, linearity, homoscedasticity).
+  * Use **Spearman’s Rank Correlation** for monotonic relationships (highly recommended for tree-based models like XGBoost, as it is robust to outliers and nonlinear scaling).
+* **Numeric vs. Target (Hypothesis Testing):** Helps to check if feature means differ significantly across target classes. First, check whether the assumptions are satisfied, and then use t-test/ANOVA or choose the appropriate test accordingly.Refer : `docs\implementation-info\guides\hypothesis-testing-guide.md`
+* **Categorical vs. Target:** First, check whether the assumptions are satisfied, and then use Chi-Square Test of Independence or choose the appropriate test accordingly. refer : `docs\implementation-info\guides\hypothesis-testing-guide.md`
+* **Complex/Non-linear relationships:** Use Mutual Information (MI) scores, which capture complex patterns that correlation misses.
+
 **Use this to decide:**
 
-* keep features with signal
+* keep features with signal (high Correlation, high MI score, or low p-value)
 * remove leakage-prone columns
 * bin continuous variables if target relation is non-linear
 * create interaction features
@@ -317,7 +328,9 @@ Focus on:
 
 ### Target relationship
 
-* [ ] Important feature-target relationships explored
+* [ ] Important feature-target relationships explored visually
+* [ ] Statistical significance or Mutual Information checked for categorical features (e.g., Chi-Square)
+* [ ] Correlation checked for numeric features (Pearson/Spearman, after validating assumptions)
 * [ ] Non-linear patterns noticed
 * [ ] Class imbalance checked
 
@@ -357,5 +370,15 @@ Let EDA answer these questions first:
 ## 8) One-line mental model
 
 **EDA tells you what the data is doing. Preprocessing turns that understanding into model-friendly inputs.**
+
+---
+
+## 9) Experiment Tracking & Hyperparameter Tuning
+
+Once EDA and preprocessing are complete, you will move to the modeling phase.
+
+* **Experiment Tracking**: Use **MLflow** to track your preprocessing decisions, hyperparameters, and resulting metrics.
+* **Hyperparameter Tuning**: Use **Optuna** to find the optimal hyperparameters for your models.
+* **Setup**: In our architecture, we use AWS Managed MLflow and Optuna backed by a persistent SQLite database on EBS (which allows for easy export/import to a local MLflow server).
 
 If you want, I can turn this into a **one-page interview-ready version** or a **project workflow template** you can reuse on any dataset.

@@ -13,7 +13,7 @@ This document defines the production-grade high-level architecture for the Fashi
 
 ### In scope (v1)
 
-- Two-stage recommendation pipeline (Two-Tower retrieval + CatBoost ranking) with explicit Filter and Order stages on top
+- Two-stage recommendation pipeline (Two-Tower retrieval + XGBoost ranking) with explicit Filter and Order stages on top
 - Real-time online serving with a 12-hour result cache
 - Frontend, API, ML inference, data lake, batch pipelines, CI/CD, and operations
 - Cost-optimized AWS deployment that retains production-grade architectural patterns
@@ -41,7 +41,7 @@ The system serves personalized top-10 fashion-article recommendations through a 
 | Serving model | Real-time per request, with a 12-hour Redis result cache | Acceptable freshness for fashion recos; cuts SageMaker invocations by ~95% on a re-visiting user |
 | Pipeline shape | Cache → Retrieve → Filter → Rank → **Order (diversity)** | Production-realistic 4-stage funnel + cache; matches the Spotify/Pinterest pattern |
 | Vector search | Lambda + FAISS (S3-backed `.index` file) | Pay-per-request, sub-millisecond warm latency, fits 10 GB Lambda memory |
-| ML inference | SageMaker Endpoints (user-tower + CatBoost) | Native A/B testing, canary deployment, drift monitoring |
+| ML inference | SageMaker Endpoints (user-tower + XGBoost) | Native A/B testing, canary deployment, drift monitoring |
 | Frontend | FastAPI + Jinja2 + HTMX + Tailwind on **ECS Fargate** | Production-grade pattern for server-rendered apps; HTMX gives a modern UI without an SPA build pipeline |
 | Frontend ingress | API Gateway HTTP API + VPC Link + Cloud Map (no ALB) | Saves ~$16/mo vs. ALB; Cloud Map service discovery suits low-traffic Fargate |
 | Frontend variant | **Lambda + LWA** as a parallel always-on demo deployment | Same Docker image; $0 idle cost; resume-shareable URL |
@@ -130,7 +130,7 @@ flowchart TB
     subgraph mlLayer [ML Inference]
         userTower["SageMaker Endpoint<br/>Two-Tower user-tower"]
         faissLambda["Lambda<br/>FAISS search"]
-        catboost["SageMaker Endpoint<br/>CatBoost ranker"]
+        xgboost["SageMaker Endpoint<br/>XGBoost ranker"]
     end
 
     subgraph dataLayer [Data Stores]
@@ -174,12 +174,12 @@ flowchart TB
     apiLambda <--> redis
     apiLambda --> userTower
     apiLambda --> faissLambda
-    apiLambda --> catboost
+    apiLambda --> xgboost
     faissLambda --> s3
 
     eventBridge --> stepFn --> glue --> s3
     stepFn --> smPipeline --> smTraining --> smRegistry --> userTower
-    smRegistry --> catboost
+    smRegistry --> xgboost
     glue --> redis
 
     warmEb --> warmProducer
@@ -189,7 +189,7 @@ flowchart TB
     warmQueue -. failed 3x .-> warmDlq
     warmConsumer --> userTower
     warmConsumer --> faissLambda
-    warmConsumer --> catboost
+    warmConsumer --> xgboost
     warmConsumer -->|writes reco:cid| redis
 
     fargate -.-> evApiGw
@@ -413,7 +413,7 @@ flowchart TB
 
     stage1["Stage 1: Retrieve<br/>features + user-tower + FAISS"]
     stage2["Stage 2: Filter<br/>drop seen items"]
-    stage3["Stage 3: Rank<br/>CatBoost endpoint"]
+    stage3["Stage 3: Rank<br/>XGBoost endpoint"]
     stage4["Stage 4: Order<br/>diversity reorder"]
     cacheWrite["Redis SETEX 12h"]
     returnFresh[Return top-10]
@@ -464,17 +464,17 @@ Three sub-steps in order:
 
 - For each remaining candidate (typically 50–100 after filter), build the feature vector: user features + item features + cross features (e.g., user's preferred category vs. item category, user's price affinity vs. item price).
 - Item features are read in bulk from Redis: `HMGET item:{id1}:features ... item:{id100}:features`. Single round-trip, sub-2 ms.
-- Invoke SageMaker Endpoint `catboost-ranker` with the batch of feature vectors.
+- Invoke SageMaker Endpoint `xgboost-ranker` with the batch of feature vectors.
 - Returns scored candidates sorted by predicted purchase probability.
 
 ### 9.5 Stage 4 — Order (diversity-aware reorder)
 
-The CatBoost output is **not** the final order. The reorder rule:
+The XGBoost output is **not** the final order. The reorder rule:
 
 ```
-positions 1–4   = top 4 items by raw CatBoost score
+positions 1–4   = top 4 items by raw XGBoost score
 positions 5–6   = top 2 items by diversity_score vs. positions 1–4
-positions 7–10  = next 4 items by raw CatBoost score
+positions 7–10  = next 4 items by raw XGBoost score
                   (excluding any already chosen in positions 5–6)
 ```
 
@@ -495,7 +495,7 @@ where:
 - `bucket_diff(bucket, S)` = `min(|bucket - s.bucket| for s in S) / max_bucket_distance`
 - Weights `w1 = w2 = w3 = 1.0` in v1; configurable via Lambda env vars
 
-The score breaks ties by raw CatBoost score (the more relevant of two equally diverse items wins).
+The score breaks ties by raw XGBoost score (the more relevant of two equally diverse items wins).
 
 #### Why this rule
 
@@ -517,7 +517,7 @@ Replace the categorical+price diversity with **embedding cosine distance** — `
 | Stage 1: FAISS Lambda invoke (warm) | 5 ms | 15 ms |
 | Stage 2: filter (Redis SMEMBERS) | 2 ms | 5 ms |
 | Stage 3: item features bulk read | 2 ms | 5 ms |
-| Stage 3: SageMaker CatBoost invoke | 25 ms | 70 ms |
+| Stage 3: SageMaker XGBoost invoke | 25 ms | 70 ms |
 | Stage 4: diversity reorder | 1 ms | 2 ms |
 | Cache write + serialize response | 3 ms | 6 ms |
 | **Total — cache miss, all warm** | **~75 ms** | **~190 ms** |
@@ -533,7 +533,7 @@ Each downstream call is wrapped in a `pybreaker` circuit breaker with these defa
 | Redis (cache or feature read) | Skip cache, continue with pipeline; emit CloudWatch alarm |
 | SageMaker user-tower endpoint | Fall back to a Redis-cached embedding for this user (24 h TTL set during last successful call). If absent, skip to popular items. |
 | FAISS Lambda | Use precomputed `popular:items:by_category` cache (refreshed nightly) |
-| SageMaker CatBoost endpoint | Return the FAISS top-K ordered by raw similarity score (no re-rank), still apply diversity reorder |
+| SageMaker XGBoost endpoint | Return the FAISS top-K ordered by raw similarity score (no re-rank), still apply diversity reorder |
 | All ML downstreams open | Return `popular:items:top100` from Redis with a `degraded=true` flag in the response payload |
 
 Every fallback emits a CloudWatch metric (`recommendation.fallback.{component}`) and increments a counter wired to an SNS alarm.
@@ -613,7 +613,7 @@ s3://fashion-reco-{env}/
 │   └── interactions/year=YYYY/month=MM/
 ├── models/                     # Model artifacts (also in SageMaker Model Registry)
 │   ├── two_tower/version={vN}/
-│   └── catboost/version={vN}/
+│   └── xgboost/version={vN}/
 ├── embeddings/                 # Item embeddings (256-dim) for FAISS index build
 │   └── items/version={vN}/
 ├── indices/                    # Built FAISS indices loaded by the FAISS Lambda
@@ -702,26 +702,26 @@ The FAISS Lambda reads `FAISS_INDEX_VERSION` env var. Deploying a new index:
 3. Existing warm containers continue serving v41 until they cycle (~15 min); new containers serve v42.
 4. Effectively a rolling deploy with no client downtime.
 
-### 12.3 CatBoost ranking model
+### 12.3 XGBoost ranking model
 
 | Aspect | Choice |
 |---|---|
-| Framework | CatBoost |
+| Framework | XGBoost |
 | Features | User features + item features + ~10 cross features (e.g., user_avg_price - item_price, category_match_flag, days_since_last_purchase_in_category) |
 | Loss | Logistic / pairwise depending on label availability |
 | Training compute | SageMaker Training Job, `ml.m5.large`, ~15 min on dev sample |
 | Inference | SageMaker Endpoint, `ml.t3.medium` (1 instance), batched per-request |
-| Output artifact | `catboost_model.cbm` |
+| Output artifact | `xgboost_model.cbm` |
 
 ### 12.4 Diversity reorder algorithm (V1)
 
-Implemented inline in the API Lambda (no separate service). Operates on the CatBoost-scored top-50.
+Implemented inline in the API Lambda (no separate service). Operates on the XGBoost-scored top-50.
 
-1. Sort by `catboost_score` desc.
+1. Sort by `xgboost_score` desc.
 2. Take items[0..3] → positions 1–4.
 3. Build `diversity_pool = items[4..30]` (next 26 candidates).
 4. For each `c in diversity_pool`, compute `diversity_score(c, items[0..3])`.
-5. Sort `diversity_pool` by `(-diversity_score, -catboost_score)` to break ties.
+5. Sort `diversity_pool` by `(-diversity_score, -xgboost_score)` to break ties.
 6. Take pool[0..1] → positions 5–6.
 7. Build `relevance_pool = items[4..49] minus chosen for 5-6`.
 8. Take relevance_pool[0..3] → positions 7–10.
@@ -768,7 +768,7 @@ flowchart TB
     pipelineStart[Triggered by Step Functions]
     train1[SageMaker Processing<br/>build training tables]
     train2[SageMaker Training<br/>two-tower model]
-    train3[SageMaker Training<br/>catboost model]
+    train3[SageMaker Training<br/>xgboost model]
     eval[SageMaker Processing<br/>evaluate on holdout]
     cond{"recall@100 &gt; baseline<br/>and<br/>auc &gt; baseline?"}
     register[RegisterModel<br/>SageMaker Model Registry]
@@ -834,7 +834,7 @@ flowchart LR
     dlq[SQS DLQ]
     consumer["Lambda<br/>prewarm-consumer<br/>reserved concurrency 5"]
     redis[(ElastiCache Redis)]
-    sm["SageMaker user-tower<br/>+ FAISS Lambda<br/>+ CatBoost"]
+    sm["SageMaker user-tower<br/>+ FAISS Lambda<br/>+ XGBoost"]
 
     eb --> producer
     producer -->|LRANGE active:users:top6 0 2| redis
@@ -962,7 +962,7 @@ This system explicitly addresses the seven patterns from [Jam with AI's "System 
 | 2 | Rate Limiting | (a) API Gateway stage throttling 60 RPS, burst 100. (b) Application-level token bucket per `customer_id` in Redis (30 req/min/user). |
 | 3 | Caching | Result cache (Redis 12 h), feature cache (Redis 1–24 h), popular items cache (Redis daily), edge cache (CloudFront 1 h). Section 11.4 has the full map. |
 | 4 | Message Queues | (v1) SQS Standard queue + DLQ for nightly cache pre-warming with idempotent consumer Lambda; demonstrates work-queue + dead-letter patterns (Section 13.5). (v1.1) Firehose for high-volume click/view events; SQS for purchase events with DLQ. Synchronous request path stays queue-free. |
-| 5 | Circuit Breakers | `pybreaker` on every downstream (Redis, user-tower, FAISS, CatBoost). Per-stage fallback table in Section 9.7. |
+| 5 | Circuit Breakers | `pybreaker` on every downstream (Redis, user-tower, FAISS, XGBoost). Per-stage fallback table in Section 9.7. |
 | 6 | Load Balancing | Implicit via managed services: API Gateway distributes to Lambda containers; SageMaker multi-instance endpoints route internally; ECS Fargate balances across tasks via Cloud Map. No explicit ALB; documented as the scale-up choice. |
 | 7 | Auto Scaling | Section 15.4 below. SageMaker target tracking, Lambda reserved concurrency caps, ECS Service Auto Scaling, ElastiCache cluster mode (production). |
 
@@ -1030,7 +1030,7 @@ Two CloudWatch dashboards:
 | Resource | Policy | Min | Max |
 |---|---|---|---|
 | SageMaker user-tower endpoint | Target tracking on `SageMakerVariantInvocationsPerInstance = 1000/min` | 1 (`ml.t3.medium`) | 4 |
-| SageMaker CatBoost endpoint | Same target tracking, threshold 1000/min | 1 (`ml.t3.medium`) | 4 |
+| SageMaker XGBoost endpoint | Same target tracking, threshold 1000/min | 1 (`ml.t3.medium`) | 4 |
 | Backend API Lambda | Default per-region concurrency; reserved concurrency = 100 | 0 | 100 |
 | FAISS Lambda | Default per-region concurrency; reserved concurrency = 50 | 0 | 50 |
 | Cache pre-warm consumer Lambda | SQS event source; reserved concurrency cap (Section 13.5) | 0 | 5 |
@@ -1138,7 +1138,7 @@ All numbers are monthly, USD, us-east-1, on-demand pricing as of 2026.
 | Lambda — cache pre-warm consumer | ~90 invocations × 250 ms × 1024 MB | < $0.01 |
 | SQS — cache pre-warm queue + DLQ | ~90 messages / mo (well under free tier) | $0 |
 | SageMaker user-tower endpoint | 1 × `ml.t3.medium`, 730 h | ~$50 (cost driver) |
-| SageMaker CatBoost endpoint | 1 × `ml.t3.medium`, 730 h | ~$50 (cost driver) |
+| SageMaker XGBoost endpoint | 1 × `ml.t3.medium`, 730 h | ~$50 (cost driver) |
 | ElastiCache Redis | `cache.t3.micro`, 730 h | ~$13 |
 | S3 | 50 MB dev sample + indices + artifacts | ~$1 |
 | Glue jobs (weekly) | 4 jobs × 5 min × 2 DPU × 4 wks | ~$2 |

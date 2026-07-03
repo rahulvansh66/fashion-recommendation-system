@@ -15,7 +15,7 @@ Three layers serve different purposes. Do not conflate them.
 | Layer | Tool | Purpose | Lifetime |
 |-------|------|---------|----------|
 | **Experiment tracking** | AWS Managed MLflow | Params, metrics, plots, trial artifacts, run comparison | Ephemeral **compute**; persistent **data** |
-| **Hyperparameter search** | Optuna | Search space, trial scheduling, pruning, study persistence | Persistent study DB (cheap RDS or local SQLite) |
+| **Hyperparameter search** | Optuna | Search space, trial scheduling, pruning, study persistence | Persistent study DB (SQLite on EBS or local SQLite) |
 | **Production governance** | SageMaker Model Registry + Endpoints | Approval-gated promotion, serving, drift monitoring | Already defined in v1 HLD |
 
 ```text
@@ -89,7 +89,7 @@ s3://fashion-reco-{env}/
 ├── features/                      # existing — training inputs
 ├── models/                        # existing — promoted production artifacts
 │   ├── two_tower/version={vN}/
-│   └── catboost/version={vN}/
+│   └── xgboost/version={vN}/
 └── ...
 ```
 
@@ -107,13 +107,13 @@ flowchart TB
 
     subgraph persistent [Persistent]
         s3[(S3\nmlflow/artifacts + models/)]
-        optunaDB[(RDS PostgreSQL\ndb.t4g.micro — Optuna studies)]
+        optunaDB[(SQLite on EBS\nOptuna studies)]
     end
 
     subgraph training [Training compute — pay per job]
         optProc[SageMaker Processing\nOptuna orchestrator]
         smTrain1[Training Job\nTwo-Tower trial]
-        smTrain2[Training Job\nCatBoost trial]
+        smTrain2[Training Job\nXGBoost trial]
     end
 
     subgraph prod [Production path — existing v1]
@@ -135,7 +135,7 @@ flowchart TB
 
 | Pattern | When to use | Notes |
 |---------|-------------|-------|
-| **A. Optuna in SageMaker Processing** (orchestrator launches child Training Jobs) | Parallel trials, production-like | Shared RDS backend required ([AWS blog](https://aws.amazon.com/blogs/machine-learning/implementing-hyperparameter-optimization-with-optuna-on-amazon-sagemaker/)) |
+| **A. Optuna in SageMaker Processing** (orchestrator launches child Training Jobs) | Parallel trials, production-like | Shared SQLite on EBS backend required ([AWS blog](https://aws.amazon.com/blogs/machine-learning/implementing-hyperparameter-optimization-with-optuna-on-amazon-sagemaker/)) |
 | **B. Optuna inside one Training Job** (sequential trials) | Dev sample (~1K users), simpler | One `ml.m5.large` spot job |
 | **C. Local notebook / script** | Fast iteration, $0 AWS | SQLite + local MLflow server |
 
@@ -164,7 +164,7 @@ S3_BUCKET           = os.getenv("S3_BUCKET", "local-dev-bucket")
 |---------|-------|-----|
 | `MLFLOW_TRACKING_URI` | `http://127.0.0.1:5000` | SageMaker tracking server ARN |
 | MLflow artifacts | `./mlflow-artifacts/` or LocalStack S3 | `s3://fashion-reco-{env}/mlflow/artifacts/` |
-| `OPTUNA_STORAGE_URI` | `sqlite:///optuna.db` | `postgresql+psycopg2://…@optuna-db…/optuna` |
+| `OPTUNA_STORAGE_URI` | `sqlite:///optuna.db` | `sqlite:////mnt/ebs/optuna.db` |
 | Training compute | SageMaker SDK `instance_type='local'` | `ml.m5.large` spot |
 | **Training script (`train.py`)** | **Identical** | **Identical** |
 
@@ -227,7 +227,8 @@ study = optuna.create_study(
 )
 ```
 
-On AWS, a small **RDS PostgreSQL** (`db.t4g.micro`) dedicated to Optuna studies is sufficient. Keep it in a persistent Terraform module (like S3) so studies survive training-compute teardown.
+On AWS, **SQLite on EBS** dedicated to Optuna studies is sufficient. Keep it in a persistent Terraform module (like S3) so studies survive training-compute teardown. 
+*(Note: The reason behind choosing SQLite on EBS instead of RDS PostgreSQL is that since we have SQLite and MLflow in the local setup, when we export data from AWS MLflow we can easily import it to the local MLflow server.)*
 
 ### 6.2 Nested runs (parent study, child trials)
 
@@ -285,7 +286,7 @@ Tag every parent run and trial:
 | `git_sha` | `a1b2c3d` | Code version |
 | `feature_snapshot` | `features/2026-06-01` | S3 path or manifest hash |
 | `feature_cutoff` | `2020-03-31` | Temporal split contract |
-| `model` | `two_tower` / `catboost` | Filter in MLflow UI |
+| `model` | `two_tower` / `xgboost` | Filter in MLflow UI |
 | `data_env` | `dev` / `local` | Environment |
 
 Without these tags, experiments are not reproducible.
@@ -307,7 +308,7 @@ Detail: [`two-tower-retrieval-training-guide.md`](../two-tower-model/two-tower-r
 | **Log per trial** | Train/val loss curves, `recall@100`, checkpoint |
 | **Artifact** | `mlflow.pytorch.log_model` or log checkpoint path to S3 |
 
-### 7.2 CatBoost ranker
+### 7.2 XGBoost ranker
 
 Detail: [`ranking-model-training-guide.md`](./ranking-model-training-guide.md).
 
@@ -316,7 +317,7 @@ Detail: [`ranking-model-training-guide.md`](./ranking-model-training-guide.md).
 | **Objective metric** | `AUC-PR` on val pairs |
 | **Search space** | `depth`, `learning_rate`, `l2_leaf_reg`, `iterations` (with early stopping) |
 | **Fixed (do not tune)** | `scale_pos_weight=5`, 1:5 window-aware negatives, feature list from `configs/` |
-| **Artifact** | `mlflow.catboost.log_model` → `.cbm` file |
+| **Artifact** | `mlflow.xgboost.log_model` → `.cbm` file |
 
 ### 7.3 What to log as artifacts
 
@@ -342,7 +343,7 @@ Session end
   1. Export best params → configs/models/*.yaml
   2. stop-mlflow-tracking-server
   3. terraform destroy sagemaker endpoints (existing pattern)
-  # Keep: S3 bucket, RDS (Optuna), Stopped MLflow server resource
+  # Keep: S3 bucket, EBS (Optuna), Stopped MLflow server resource
 ```
 
 ### 8.1 Optional: auto-stop idle server
@@ -367,7 +368,7 @@ import mlflow
 import pandas as pd
 
 mlflow.set_tracking_uri(tracking_server_arn)
-runs = mlflow.search_runs(experiment_names=["two-tower-hpo", "catboost-hpo"])
+runs = mlflow.search_runs(experiment_names=["two-tower-hpo", "xgboost-hpo"])
 runs.to_parquet("s3://fashion-reco-dev/experiments/mlflow_export/runs.parquet")
 ```
 
@@ -389,7 +390,7 @@ This is a fallback — **stop/start is the primary pattern.**
 After HPO completes:
 
 1. **Select best trial** — highest val metric on the correct split; confirm tags match expected feature snapshot.
-2. **Freeze hyperparameters** — write `study.best_params` to `configs/models/two_tower.yaml` and/or `configs/models/catboost.yaml`.
+2. **Freeze hyperparameters** — write `study.best_params` to `configs/models/two_tower.yaml` and/or `configs/models/xgboost.yaml`.
 3. **Register model** — optionally register the best MLflow run to SageMaker Model Registry (managed MLflow supports this via `mlflow.register_model` or automatic model registration at tracking-server create time).
 4. **Run weekly pipeline** — SageMaker Pipeline trains once with frozen YAML, evaluates on **test**, gates on `recall@100` + `AUC-PR` + `hit_rate@10` (FR-BATCH-04).
 5. **Tag registry version** — add `mlflow.run_id` and `optuna.study_name` as Model Registry tags for lineage.
@@ -413,7 +414,7 @@ Do **not** run Optuna inside the weekly EventBridge-triggered pipeline — too e
 |-------|------------|-------------|
 | Feature pipeline | PySpark `local[*]` on `dataset/sample/` | Glue (or pre-materialized S3 features) |
 | MLflow | Local server + SQLite backend | Managed tracking server (Stopped between sessions) |
-| Optuna | SQLite storage | RDS PostgreSQL |
+| Optuna | SQLite storage | SQLite on EBS |
 | HPO | Notebook or script, sequential trials | Processing orchestrator or sequential Training Job |
 | Promotion | Copy best params to YAML manually | Same + optional Model Registry register |
 | Serving | Local inference stubs | SageMaker Endpoints (destroy between sessions) |
@@ -442,10 +443,10 @@ Per [`project-structure.md`](../../system-design/project-structure.md):
 pipelines/
 ├── training/
 │   ├── two_tower/train.py          # MLflow logging inside training loop
-│   └── catboost/train.py
+│   └── xgboost/train.py
 ├── hpo/
 │   ├── optuna_objective_two_tower.py
-│   ├── optuna_objective_catboost.py
+│   ├── optuna_objective_xgboost.py
 │   └── run_study.py                # local entry point
 └── sagemaker/
     └── hpo_processing_job.py       # AWS orchestrator (optional)
@@ -453,14 +454,14 @@ pipelines/
 configs/
 ├── models/
 │   ├── two_tower.yaml              # frozen after HPO
-│   └── catboost.yaml
+│   └── xgboost.yaml
 └── hpo/
     ├── two_tower_search_space.yaml
-    └── catboost_search_space.yaml
+    └── xgboost_search_space.yaml
 
 infra/modules/
 ├── mlflow_tracking_server/         # create + stop/start outputs
-└── optuna_rds/                     # persistent PostgreSQL
+└── optuna_ebs/                     # persistent SQLite on EBS
 ```
 
 Notebooks under `notebooks/` (e.g. `04_two_tower_experiments.ipynb`) may call the same `run_study.py` helpers — do not import from `src/` in notebooks per project rules.
@@ -476,6 +477,6 @@ Notebooks under `notebooks/` (e.g. `04_two_tower_experiments.ipynb`) may call th
 | Optuna + SageMaker parallel HPO | [AWS ML blog](https://aws.amazon.com/blogs/machine-learning/implementing-hyperparameter-optimization-with-optuna-on-amazon-sagemaker/) |
 | Optuna MLflow callback | [Optuna MLflowCallback](https://optuna.readthedocs.io/en/stable/reference/generated/optuna.integration.MLflowCallback.html) |
 | Two-Tower training | [`two-tower-retrieval-training-guide.md`](../two-tower-model/two-tower-retrieval-training-guide.md) |
-| CatBoost ranker training | [`ranking-model-training-guide.md`](./ranking-model-training-guide.md) |
+| XGBoost ranker training | [`ranking-model-training-guide.md`](./ranking-model-training-guide.md) |
 | Production ML pipeline | [`v1-hld.md`](../../system-design/v1/v1-hld.md) §12.3 |
 | Cost / destroy patterns | [`v1-infrastructure-layer.md`](../../system-design/v1/v1-infrastructure-layer.md) |

@@ -1,0 +1,105 @@
+# ML-specific Pandas dtype mapping for the engineered features table.
+#
+# These types are used by notebooks/utils/data_casting.py to cast the features
+# DataFrame loaded from Spark-written Parquet in notebook 04, then overwrite the
+# Parquet file so downstream modeling code never needs to repeat type conversions.
+#
+# Spark writes Parquet with its own types; Pandas reads them as int64/float64/object.
+# This config maps each column to the correct compact Pandas dtype.
+#
+# Dtype values are real Pandas dtype strings:
+#   object          — string IDs, codes, free text (no-op if already object)
+#   category        — low-cardinality nominal labels
+#   Int32           — nullable integer (pandas capital-I, supports pd.NA)
+#   float32         — continuous numeric values
+#   datetime64[ns]  — date/time columns (handled via pd.to_datetime, not astype)
+
+features:
+  # --- IDs / anchor ---
+  customer_id: object              # string ID
+  article_id: object               # string ID
+  snap_date: datetime64[ns]        # Spark DateType reads as object; pd.to_datetime applied
+  label: Int32                     # 0/1 binary label, nullable
+
+  # --- Pass-through customer attributes ---
+  FN: category                     # Spark null → float64; fillna("unknown") before cast
+  Active: category                 # same pattern
+  club_member_status: category
+  fashion_news_frequency: category
+  age: float32                     # has NaN
+  postal_code: object
+
+  # --- Pass-through article attributes ---
+  product_code: object             # code, not a quantity
+  prod_name: object                # free text
+  product_type_no: Int32
+  product_type_name: category
+  product_group_name: category
+  graphical_appearance_no: Int32
+  graphical_appearance_name: category
+  colour_group_code: object        # short code e.g. "09"
+  colour_group_name: category
+  perceived_colour_value_id: Int32
+  perceived_colour_value_name: category
+  perceived_colour_master_id: Int32
+  perceived_colour_master_name: category
+  department_no: Int32
+  department_name: category
+  index_code: object               # single-char code
+  index_name: category
+  index_group_no: Int32
+  index_group_name: category
+  section_no: Int32
+  section_name: category
+  garment_group_no: Int32
+  detail_desc: object              # free text
+
+  # --- Engineered item features ---
+  item_category: category          # alias of garment_group_name
+  item_color: category             # alias of colour_group_name
+  item_pop_7d: Int32               # Spark sum → long
+  item_pop_30d: Int32
+  item_pop_180d: Int32
+  item_pop_same_month_last_year: Int32
+  item_category_pop_30d: Int32
+  item_category_pop_180d: Int32
+  first_sold_date: datetime64[ns]  # Spark DateType; pd.to_datetime applied
+  days_since_first_sold: float32   # nullable — null if item never sold before snap_date
+  item_recent_to_last_180d_ratio: float32
+  item_category_recent_to_lifetime_ratio: float32
+  item_seasonality_strength: float32
+  item_avg_price: float32
+  item_days_since_last_sold: float32  # nullable
+  item_sales_channel_2_count: Int32
+  item_sales_channel_2_share: float32
+
+  # --- Engineered user features ---
+  user_category_pref_1y_rank1: category  # may be null for new users
+  user_category_pref_1y_rank2: category
+  user_category_pref_1y_rank3: category
+  user_color_pref_1y_rank1: category
+  user_color_pref_1y_rank2: category
+  user_days_since_last_purchase: float32  # nullable (new user)
+  user_purchase_count_30d: Int32
+  user_purchase_count_180d: Int32
+  user_decayed_price_avg: float32
+  user_decayed_price_std: float32
+
+  # --- Engineered user-item cross features ---
+  user_item_repurchase: Int32       # Spark count → long
+  user_item_decayed_repurchase: float32
+  user_item_decayed_interaction_ratio: float32
+  user_item_repurchase_30d: Int32
+  user_item_repurchase_90d: Int32
+  user_item_repurchase_365d: Int32
+  user_item_days_since_last_purchase: float32  # nullable
+  user_item_sales_channel_2_count: Int32
+  user_purchases_in_candidate_category_1y: Int32
+  user_days_since_last_purchase_in_category: float32  # nullable
+  user_category_match_rank1: Int32  # binary 0/1 flag
+  user_category_match_rank2: Int32
+  user_category_match_rank3: Int32
+  candidate_price: float32
+  user_item_price_decayed_zscore: float32
+  txn_month_sin: float32            # cyclical time encoding
+  txn_month_cos: float32

@@ -1,6 +1,22 @@
 # Fashion Recommendation System
 
-Learning-grade, production-pattern v1 for personalized fashion recommendations (H&M dataset). See [`docs/system-design/v1/v1-hld.md`](docs/system-design/v1/v1-hld.md) for architecture.
+<!-- Building a two-stage recommendation system that predicts purchase likelihood over the next 7 days, deployed on AWS. -->
+
+<!-- Personalized top-15 fashion recommendations: -->
+Building a personalized two-stage recommendation system that predicts which products a user may buy in the next 7 days using Two-Tower candidate retrieval and XGBoost ranking, deployed on AWS.
+
+The system learns users' shopping behavior from purchase history and engineered time-series features to generate personalized recommendations.
+
+<!-- Recommendations are generated based on user historical purchase sequences and time-series
+patterns. -->
+
+<!-- Built on AWS — FastAPI on ECS Fargate, SageMaker inference, FAISS vector search, Redis caching, and S3 data lake — with infrastructure managed by Terraform.  -->
+
+<!-- (ECS Fargate, SageMaker, Redis, S3) -->
+
+ <!-- Cache → Retrieve → Filter → Rank → Order pipeline on ECS Fargate, SageMaker, FAISS (Lambda), ElastiCache Redis, and S3, deployed with Terraform.  -->
+
+<!-- See full plan [`docs/system-design/v1/v1-hld.md`](docs/system-design/v1/v1-hld.md) for HLD architecture. -->
 
 ## Prerequisites
 

@@ -33,9 +33,9 @@ A Two-Tower neural network (PyTorch) learns separate 256-dimensional embedding s
 
 At inference time, FAISS (Approximate Nearest Neighbor search) finds the top-100 most similar item embeddings for the requesting user. This narrows 5K–105K items down to 100 candidates in under 1ms.
 
-### Stage 2 — Ranking (CatBoost)
+### Stage 2 — Ranking (XGBoost)
 
-The 100 FAISS candidates are re-ranked using a CatBoost gradient boosting model with a richer feature set: user × item cross features, recency, price affinity, category overlap, and optionally LLM-derived style tags. CatBoost scores each candidate and returns the top-K items.
+The 100 FAISS candidates are re-ranked using a XGBoost gradient boosting model with a richer feature set: user × item cross features, recency, price affinity, category overlap, and optionally LLM-derived style tags. XGBoost scores each candidate and returns the top-K items.
 
 ### Recommendation Request Path
 
@@ -47,7 +47,7 @@ API Gateway → Lambda (FastAPI + AWS Lambda Web Adapter)
  1. Fetch user features          (Redis hot-path / S3 fallback)
  2. Two-Tower SageMaker Endpoint → user embedding
  3. FAISS Lambda                 → top-100 candidates
- 4. CatBoost SageMaker Endpoint  → ranked scores
+ 4. XGBoost SageMaker Endpoint  → ranked scores
  5. Return top-K items
 ```
 
@@ -57,7 +57,7 @@ API Gateway → Lambda (FastAPI + AWS Lambda Web Adapter)
 
 A fine-tuned LLM (HuggingFace + LoRA/PEFT) runs as an **offline batch process** to extract structured style tags from article text descriptions — e.g., "casual", "formal", "streetwear", "minimalist".
 
-These tags are aggregated per user from their purchase history and stored as features in S3. The Two-Tower and CatBoost models consume them through the standard feature pipeline — they never call the LLM at inference time.
+These tags are aggregated per user from their purchase history and stored as features in S3. The Two-Tower and XGBoost models consume them through the standard feature pipeline — they never call the LLM at inference time.
 
 **This is not required for the core pipeline.** The recommendation system works without it. When enabled, it runs periodically (e.g. weekly) and enriches the user profile with content-based signals that improve cold-start performance and recommendation diversity.
 
@@ -68,7 +68,7 @@ articles_clean.parquet
     → s3://bucket/enriched/article_tags.parquet
     → s3://bucket/enriched/user_tag_features.parquet
     → feature_pipeline/user_features.py (as one feature among many)
-    → Two-Tower + CatBoost training
+    → Two-Tower + XGBoost training
 ```
 
 ---
@@ -77,7 +77,7 @@ articles_clean.parquet
 
 A chatbot panel alongside the product feed. Users ask natural language questions — "show me something casual for summer" or "what's good for a wedding?" — and the chatbot responds with a grounded answer or product list.
 
-**This is completely separate from the recommendation pipeline.** The Two-Tower + CatBoost system recommends items based on purchase history (collaborative signal). The RAG chatbot answers queries based on product content (semantic signal). They serve different user intents and run on different request paths.
+**This is completely separate from the recommendation pipeline.** The Two-Tower + XGBoost system recommends items based on purchase history (collaborative signal). The RAG chatbot answers queries based on product content (semantic signal). They serve different user intents and run on different request paths.
 
 ### Chatbot Request Path
 
@@ -114,7 +114,7 @@ API Gateway → Lambda (FastAPI + AWS Lambda Web Adapter)
  feature_pipeline/    Clean data + optional tags → Model features (S3)
 
  retrieval/           Two-Tower training → Item embeddings → faiss_items.index
- ranking/             CatBoost training
+ ranking/             XGBoost training
 
  generation/rag/      Article descriptions → faiss_rag.index
  [STANDALONE]         (independent of recommendation pipeline)
@@ -123,7 +123,7 @@ API Gateway → Lambda (FastAPI + AWS Lambda Web Adapter)
                      ONLINE SERVING
 ─────────────────────────────────────────────────────────────
  GET /recommendations/{user_id}
-   → Two-Tower SageMaker → FAISS items → CatBoost SageMaker → top-K items
+   → Two-Tower SageMaker → FAISS items → XGBoost SageMaker → top-K items
 
  POST /chat
    → FAISS RAG → LLM SageMaker → natural language answer
@@ -159,7 +159,7 @@ API Gateway → Lambda (FastAPI + AWS Lambda Web Adapter)
 ```
 Step 1  run_data_pipeline.py         raw → clean
 Step 2  run_feature_pipeline.py      clean → model features
-Step 3  run_training_pipeline.py     train Two-Tower + CatBoost
+Step 3  run_training_pipeline.py     train Two-Tower + XGBoost
 Step 4  run_index_pipeline.py        build faiss_items.index
 
 Optional (before Step 2):
@@ -185,7 +185,7 @@ Standalone:
 
 | Area | Specifics |
 |------|-----------|
-| **ML Engineering** | Two-tower contrastive learning, FAISS ANN search, CatBoost ranking, LLM fine-tuning with LoRA |
+| **ML Engineering** | Two-tower contrastive learning, FAISS ANN search, XGBoost ranking, LLM fine-tuning with LoRA |
 | **Feature Engineering** | PySpark feature pipelines, user/item aggregates, LLM-derived features, Redis feature serving |
 | **System Design** | Two-stage retrieval-ranking funnel, offline training vs online serving separation, RAG architecture |
 | **AWS** | SageMaker Training Jobs + Endpoints, Lambda, API Gateway, S3 data lake, ElastiCache, Glue |

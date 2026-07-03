@@ -14,7 +14,7 @@
 
 **Documentation Files:**
 - `docs/project-info/feature-pipeline-analysis.md` - Data preprocessing and feature engineering analysis
-- `docs/project-info/training-pipeline-analysis.md` - Two-tower and CatBoost model training analysis  
+- `docs/project-info/training-pipeline-analysis.md` - Two-tower and XGBoost model training analysis  
 - `docs/project-info/inference-pipeline-analysis.md` - Real-time serving and deployment analysis
 - `docs/project-info/complete-system-architecture.md` - End-to-end system integration guide
 
@@ -51,7 +51,7 @@ mkdir -p docs/project-info/downloaded-implementations/python-modules
 ## Notebook Files
 - `1_fp_computing_features.ipynb` - Feature pipeline implementation
 - `2_tp_training_retrieval_model.ipynb` - Two-tower model training
-- `3_tp_training_ranking_model.ipynb` - Ranking model training (CatBoost)
+- `3_tp_training_ranking_model.ipynb` - Ranking model training (XGBoost)
 - `4_ip_computing_item_embeddings.ipynb` - Item embedding computation
 - `5_ip_creating_deployments.ipynb` - Deployment pipeline setup
 - `7_ip_creating_deployments_llm_ranking.ipynb` - LLM-enhanced ranking
@@ -330,11 +330,11 @@ git commit -m "feat: analyze feature pipeline implementation
 # Training Pipeline Analysis
 
 ## Overview
-Analysis of model training implementations including two-tower retrieval model and CatBoost ranking model.
+Analysis of model training implementations including two-tower retrieval model and XGBoost ranking model.
 
 **Source Files:**
 - Two-tower: `2_tp_training_retrieval_model.ipynb`
-- CatBoost: `3_tp_training_ranking_model.ipynb`
+- XGBoost: `3_tp_training_ranking_model.ipynb`
 - Production: `recsys/training/` and `recsys/models/`
 
 ## Two-Tower Model Architecture
@@ -348,10 +348,10 @@ Analysis of model training implementations including two-tower retrieval model a
 ### Training Configuration
 [Hyperparameters and training setup]
 
-## CatBoost Ranking Model
+## XGBoost Ranking Model
 
 ### Model Configuration
-[CatBoost hyperparameters and setup]
+[XGBoost hyperparameters and setup]
 
 ### Feature Engineering for Ranking
 [Features used in ranking model]
@@ -363,9 +363,9 @@ Analysis of model training implementations including two-tower retrieval model a
 # Training code snippets from notebooks
 ```
 
-### CatBoost Training Process
+### XGBoost Training Process
 ```python
-# CatBoost training implementation
+# XGBoost training implementation
 ```
 
 ## Model Evaluation
@@ -416,11 +416,11 @@ Document training configuration including:
 - Embedding dimensions
 - Network layer specifications
 
-- [ ] **Step 6: Analyze CatBoost model implementation**
+- [ ] **Step 6: Analyze XGBoost model implementation**
 
-Extract CatBoost configuration from ranking notebook:
+Extract XGBoost configuration from ranking notebook:
 ```bash
-grep -n -A 10 -B 5 "CatBoost\|catboost\|ranking" docs/project-info/downloaded-implementations/notebooks/3_tp_training_ranking_model.ipynb
+grep -n -A 10 -B 5 "XGBoost\|xgboost\|ranking" docs/project-info/downloaded-implementations/notebooks/3_tp_training_ranking_model.ipynb
 ```
 
 - [ ] **Step 7: Document evaluation methodology**
@@ -434,7 +434,7 @@ git add docs/project-info/training-pipeline-analysis.md
 git commit -m "feat: analyze training pipeline implementations
 
 - Document two-tower model architecture and training process
-- Extract CatBoost ranking model configuration and setup
+- Extract XGBoost ranking model configuration and setup
 - Document evaluation methodology and performance metrics"
 ```
 
@@ -466,7 +466,7 @@ Analysis of real-time recommendation serving and deployment infrastructure.
 [Two-tower retrieval implementation]
 
 ### Ranking Model Inference
-[CatBoost scoring and ranking]
+[XGBoost scoring and ranking]
 
 ## Deployment Infrastructure
 
@@ -549,12 +549,12 @@ git commit -m "feat: analyze inference pipeline implementation
 ### 4-Stage Recommendation Pipeline
 1. **Candidate Generation**: Two-tower model retrieval from vector database
 2. **Filtering**: Remove viewed/purchased items using efficient data structures  
-3. **Ranking**: CatBoost model scoring with rich feature sets
+3. **Ranking**: XGBoost model scoring with rich feature sets
 4. **Ordering**: Final recommendation ranking and business logic
 
 ### Technology Stack
 - **Data Processing**: Polars for high-performance data manipulation
-- **ML Models**: TensorFlow/Keras (two-tower), CatBoost (ranking)
+- **ML Models**: TensorFlow/Keras (two-tower), XGBoost (ranking)
 - **MLOps Platform**: Hopsworks AI Lakehouse for FTI pipeline orchestration
 - **Vector Database**: [Extract from analysis]
 - **Deployment**: KServe on Kubernetes
@@ -566,7 +566,7 @@ git commit -m "feat: analyze inference pipeline implementation
 ```
 Raw H&M Data → Feature Engineering → Model Training → Embedding Computation
      ↓               ↓                    ↓              ↓
-  CSV files     Polars pipeline    Two-tower + CatBoost   Item vectors
+  CSV files     Polars pipeline    Two-tower + XGBoost   Item vectors
      ↓               ↓                    ↓              ↓  
 Feature store → Training pipeline → Model registry → Vector database
 ```
@@ -577,7 +577,7 @@ User Request → Customer Features → Two-tower Inference → Candidate Items
      ↓              ↓                     ↓               ↓
 API endpoint → Feature lookup → Vector similarity → Top-K retrieval
      ↓              ↓                     ↓               ↓
-CatBoost scoring → Final ranking → Business logic → Recommendations
+XGBoost scoring → Final ranking → Business logic → Recommendations
 ```
 
 ## Integration Patterns
@@ -647,7 +647,7 @@ Update `docs/project-info/downloaded-implementations/README.md`:
 ## Analysis Status - COMPLETED
 - [x] Files downloaded and verified (6 notebooks, core Python modules)
 - [x] Feature pipeline analyzed - comprehensive preprocessing documentation  
-- [x] Training pipeline analyzed - two-tower and CatBoost implementations
+- [x] Training pipeline analyzed - two-tower and XGBoost implementations
 - [x] Inference pipeline analyzed - real-time serving and deployment
 - [x] Complete system documentation created - end-to-end architecture
 
@@ -668,7 +668,7 @@ Update `docs/project-info/downloaded-implementations/README.md`:
 
 ### Pipeline Documentation
 1. **[Feature Pipeline Analysis](feature-pipeline-analysis.md)** - Data preprocessing and feature engineering
-2. **[Training Pipeline Analysis](training-pipeline-analysis.md)** - Two-tower and CatBoost model training
+2. **[Training Pipeline Analysis](training-pipeline-analysis.md)** - Two-tower and XGBoost model training
 3. **[Inference Pipeline Analysis](inference-pipeline-analysis.md)** - Real-time serving and deployment
 4. **[Complete System Architecture](complete-system-architecture.md)** - End-to-end system integration
 
@@ -680,7 +680,7 @@ Update `docs/project-info/downloaded-implementations/README.md`:
 
 ### Model Architecture
 - **Two-tower model**: Dual encoders for customer and item embeddings in shared vector space
-- **CatBoost ranking**: Gradient boosting for final recommendation scoring
+- **XGBoost ranking**: Gradient boosting for final recommendation scoring
 - **4-stage pipeline**: Generation → Filtering → Ranking → Ordering
 
 ### Technology Stack  
@@ -694,7 +694,7 @@ Update `docs/project-info/downloaded-implementations/README.md`:
 ## Implementation Checklist for H&M Context
 - [ ] Adapt feature engineering to H&M schema (articles, customers, transactions)
 - [ ] Configure two-tower model for fashion item characteristics  
-- [ ] Integrate CatBoost ranking with fashion-specific features
+- [ ] Integrate XGBoost ranking with fashion-specific features
 - [ ] Set up vector database for 105K H&M articles
 - [ ] Implement real-time serving for 1.37M customers
 ```
@@ -723,7 +723,7 @@ git commit -m "feat: complete TikTok-like recommender system analysis
 
 COMPREHENSIVE DOCUMENTATION:
 - Feature pipeline: preprocessing and feature engineering analysis
-- Training pipeline: two-tower and CatBoost model implementations  
+- Training pipeline: two-tower and XGBoost model implementations  
 - Inference pipeline: real-time serving and deployment architecture
 - System architecture: complete end-to-end integration guide
 - Master guide: navigation and H&M adaptation notes

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide explains how to integrate the synthetic interaction data (`interaction_score`, `prev_article_id`) into the Two-Tower Retrieval + CatBoost Ranking architecture.
+This guide explains how to integrate the synthetic interaction data (`interaction_score`, `prev_article_id`) into the Two-Tower Retrieval + XGBoost Ranking architecture.
 
 **Current State:** Interaction features are generated but unused in model training.
 
@@ -120,7 +120,7 @@ class TwoTowerModel:
 
 ---
 
-### 1.2 CatBoost Ranking: Replace Random Negatives
+### 1.2 XGBoost Ranking: Replace Random Negatives
 
 **Current Negative Sampling:**
 ```python
@@ -235,7 +235,7 @@ def add_sequential_features(ranking_df: pl.DataFrame) -> pl.DataFrame:
     return ranking_df
 ```
 
-**CatBoost automatically handles these categorical features:**
+**XGBoost automatically handles these categorical features:**
 ```python
 cat_features = [
     'product_type_name',
@@ -369,7 +369,7 @@ class MultiTaskTwoTower(tf.keras.Model):
 ### Phase 1: Quick Wins (1-2 weeks)
 1. ✅ **Update Two-Tower dataset** to read from `interactions` feature group
 2. ✅ **Add sample weights** based on `interaction_score`
-3. ✅ **Replace random negatives in CatBoost** with ignore events
+3. ✅ **Replace random negatives in XGBoost** with ignore events
 4. ✅ **Evaluate metrics**: Compare old vs new models
 
 **Success Criteria:**
@@ -382,7 +382,7 @@ class MultiTaskTwoTower(tf.keras.Model):
 ### Phase 2: Sequential Features (2-3 weeks)
 1. ✅ **Add `prev_article_id` features** to ranking dataset
 2. ✅ **Create category/type matching features**
-3. ✅ **Retrain CatBoost** with new features
+3. ✅ **Retrain XGBoost** with new features
 4. ✅ **A/B test** sequential vs non-sequential models
 
 **Success Criteria:**
@@ -499,7 +499,7 @@ If full integration is too complex, use interactions **only for ranking**:
 # Two-Tower: Keep training on transactions (proven stable)
 two_tower_dataset = transactions.join(customers).join(articles)
 
-# CatBoost: Use interactions (better negatives)
+# XGBoost: Use interactions (better negatives)
 ranking_dataset = interactions.filter(interaction_score >= 0)
 ```
 
@@ -540,14 +540,14 @@ ranking_dataset = interactions.filter(interaction_score >= 0)
 
 # Summary
 
-Perfect! I've created a comprehensive guide on how to integrate interaction features into your Two-Tower + CatBoost architecture. Here's a summary of the key integration strategies:
+Perfect! I've created a comprehensive guide on how to integrate interaction features into your Two-Tower + XGBoost architecture. Here's a summary of the key integration strategies:
 
 ## Quick Summary: How to Use Interaction Features
 
 ### The Problem
 Currently, the system generates rich interaction data (ignores, clicks, purchases) but only trains on purchases. This means:
 - **Two-Tower model**: Learns from purchases only, uses random negatives
-- **CatBoost ranker**: Learns from purchases only, uses random customer-item pairs as negatives
+- **XGBoost ranker**: Learns from purchases only, uses random customer-item pairs as negatives
 
 ### The Solution: Two Approaches
 
@@ -562,7 +562,7 @@ Currently, the system generates rich interaction data (ignores, clicks, purchase
 ```
 **Impact:** 5-10% recall improvement with minimal code changes
 
-**For CatBoost Ranking:**
+**For XGBoost Ranking:**
 ```python
 # Replace random negatives with actual ignored items
 positives = interactions[interaction_score == 2]  # Purchases
@@ -595,12 +595,12 @@ negatives = interactions[interaction_score == 0]  # Ignores (hard negatives)
 ### Phase 1: Quick Wins (1-2 weeks)
 1. Update Two-Tower to read from `interactions` feature group
 2. Add sample weights based on `interaction_score`
-3. Replace random negatives in CatBoost with ignore events
+3. Replace random negatives in XGBoost with ignore events
 4. **Expected gain:** 5-15% across metrics
 
 ### Phase 2: Sequential Features (2-3 weeks)
 1. Add `prev_article_id` derived features to ranking
-2. Retrain CatBoost with session context
+2. Retrain XGBoost with session context
 3. **Expected gain:** Additional 3-5% improvement
 
 ### Phase 3: Sequence Models (Optional, 4-6 weeks)

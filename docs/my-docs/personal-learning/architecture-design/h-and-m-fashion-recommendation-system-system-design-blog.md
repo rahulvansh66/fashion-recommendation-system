@@ -122,18 +122,18 @@ The filter stage removes articles that the customer has already purchased. It re
 **Why it's useful in this project:**  
 Fashion recommendations should not keep suggesting items the customer has already bought, especially in a top-10 list. Redis sets make this lookup simple and fast. The same stage also supports cold-start behavior by falling back to popular items when user information is missing.
 
-### Stage 3: SageMaker CatBoost Ranker
+### Stage 3: SageMaker XGBoost Ranker
 
 **What it does:**  
-The ranker receives the filtered candidates with user features, item features, and cross features. CatBoost scores each candidate by predicted purchase probability and returns a ranked list.
+The ranker receives the filtered candidates with user features, item features, and cross features. XGBoost scores each candidate by predicted purchase probability and returns a ranked list.
 
 **Why it's useful in this project:**  
-Retrieval is good at finding a broad candidate set, but ranking needs richer signals. CatBoost can use structured fashion features such as product type, color, price affinity, category preference, and recency. This two-stage setup keeps the system fast without giving up ranking quality.
+Retrieval is good at finding a broad candidate set, but ranking needs richer signals. XGBoost can use structured fashion features such as product type, color, price affinity, category preference, and recency. This two-stage setup keeps the system fast without giving up ranking quality.
 
 ### Stage 4: Diversity Reorder
 
 **What it does:**  
-The final stage adjusts the ranked list so the top recommendations are not too repetitive. The top four positions stay focused on CatBoost score, positions five and six introduce diversity, and the remaining positions return to the next strongest ranked items.
+The final stage adjusts the ranked list so the top recommendations are not too repetitive. The top four positions stay focused on XGBoost score, positions five and six introduce diversity, and the remaining positions return to the next strongest ranked items.
 
 **Why it's useful in this project:**  
 Fashion discovery is not only about showing the ten most similar products. A user may prefer a mix of categories, colors, and price ranges. A small diversity step makes the final list feel more natural without adding another heavy model call.
@@ -193,7 +193,7 @@ Feature engineering is batch-heavy work. Glue lets the project use Spark-style p
 ### SageMaker Pipelines
 
 **What it does:**  
-SageMaker Pipelines handles the ML workflow: preparing training tables, training the two-tower and CatBoost models, evaluating them, registering approved versions, computing item embeddings, and deploying model updates.
+SageMaker Pipelines handles the ML workflow: preparing training tables, training the two-tower and XGBoost models, evaluating them, registering approved versions, computing item embeddings, and deploying model updates.
 
 **Why it's useful in this project:**  
 ML workflows need more than a script that trains a model once. They need repeatability, evaluation gates, model lineage, and safe deployment. SageMaker Pipelines provides those pieces in the same ecosystem as SageMaker endpoints.
@@ -201,7 +201,7 @@ ML workflows need more than a script that trains a model once. They need repeata
 ### SageMaker Training
 
 **What it does:**  
-Training jobs train the two-tower retrieval model and the CatBoost ranking model using prepared feature data.
+Training jobs train the two-tower retrieval model and the XGBoost ranking model using prepared feature data.
 
 **Why it's useful in this project:**  
 Training can be compute-heavy and does not belong in the web application. Managed training jobs keep that work isolated, repeatable, and easier to scale or shut down when not needed.
@@ -308,7 +308,7 @@ When the system is viewed as a whole, the flow is straightforward.
 
 The user starts in the browser. CloudFront and API Gateway handle the edge request and pass it into the FastAPI application running on ECS Fargate. The application first checks Redis because the best request is the one that can be answered from cache. If the recommendation result is already present and fresh, the system returns the top-10 list immediately.
 
-On a cache miss, the application runs the online serving pipeline. It generates a user embedding through the SageMaker user tower, retrieves candidate items through FAISS in Lambda, removes already-purchased items using Redis, ranks the remaining candidates with the CatBoost SageMaker endpoint, and applies a diversity-aware reorder before writing the final result back to Redis.
+On a cache miss, the application runs the online serving pipeline. It generates a user embedding through the SageMaker user tower, retrieves candidate items through FAISS in Lambda, removes already-purchased items using Redis, ranks the remaining candidates with the XGBoost SageMaker endpoint, and applies a diversity-aware reorder before writing the final result back to Redis.
 
 The offline system keeps that online path lean. Glue prepares clean data and features. SageMaker Pipelines trains, evaluates, registers, and deploys model versions. A Lambda builds the FAISS index and stores it in S3. Redis is refreshed with hot keys such as popular items, seen sets, active users, and cached recommendations.
 

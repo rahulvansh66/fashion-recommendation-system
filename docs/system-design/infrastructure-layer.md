@@ -72,8 +72,8 @@ Feature Pipeline (PySpark)
  └──────────────────────────────────┘
         ↓
  ┌──────────────────────────────────┐
- │   CatBoost Ranking Model Training │
- │  (Local CatBoost → SageMaker)     │
+ │   XGBoost Ranking Model Training │
+ │  (Local XGBoost → SageMaker)     │
  └──────────────────────────────────┘
         ↓
  ┌──────────────────────────────────┐
@@ -90,10 +90,10 @@ Feature Pipeline (PySpark)
 - **AWS**: SageMaker Training Job → SageMaker Endpoint
 - **Output**: 256-dimensional user/item embedding vectors
 
-#### CatBoost Ranking Model
+#### XGBoost Ranking Model
 
 - **Purpose**: Re-ranks top-K candidates retrieved by FAISS using rich feature set
-- **Framework**: CatBoost
+- **Framework**: XGBoost
 - **Local**: Local training script
 - **AWS**: SageMaker Training Job → SageMaker Endpoint
 - **Input**: Candidate items + user context features
@@ -127,7 +127,7 @@ Lambda (FastAPI + AWS Lambda Web Adapter)
  │    (Two-Tower user tower)                    │
  │ 3. Lambda FAISS → top-100 candidates         │
  │    (faiss_items.index — item embeddings)     │
- │ 4. SageMaker Endpoint → CatBoost re-ranking  │
+ │ 4. SageMaker Endpoint → XGBoost re-ranking  │
  │ 5. Return top-K ranked recommendations       │
  └─────────────────────────────────────────────┘
       ↓
@@ -171,7 +171,7 @@ These two paths use **separate FAISS indices** built from different data and ser
 - **AWS**: Lambda + AWS Lambda Web Adapter (zero code changes — same container runs everywhere)
 - **Migration**: True zero-code-change deployment — LWA runs as Lambda extension, forwards events as HTTP to FastAPI
 - **Endpoints**:
-  - `GET /recommendations/{user_id}` — Two-Tower + CatBoost recommendation pipeline
+  - `GET /recommendations/{user_id}` — Two-Tower + XGBoost recommendation pipeline
   - `POST /chat` — RAG chatbot *(future)*
   - `GET /health` — health check
 
@@ -195,8 +195,10 @@ These two paths use **separate FAISS indices** built from different data and ser
 | Two-Tower inference | Local PyTorch server | SageMaker Endpoint | Generate user embedding at request time |
 | Recommendation FAISS index build | Local script | Lambda | Build ANN index from item embeddings |
 | Recommendation FAISS search | Local FAISS | Lambda + FAISS | Retrieve top-100 candidates |
-| CatBoost training | Local CatBoost | SageMaker Training Job | Train ranking model |
-| CatBoost inference | Local server | SageMaker Endpoint | Re-rank candidates |
+| XGBoost training | Local XGBoost | SageMaker Training Job | Train ranking model |
+| Hyperparameter tuning (HPO) | Local Optuna + SQLite | Optuna + SQLite on EBS | Find best model parameters |
+| Experiment tracking | Local MLflow server | AWS Managed MLflow | Track metrics, parameters, and artifacts |
+| XGBoost inference | Local server | SageMaker Endpoint | Re-rank candidates |
 | API orchestration | FastAPI + uvicorn | Lambda + AWS Lambda Web Adapter | Route requests, coordinate pipeline |
 | Feature caching | Local Redis | ElastiCache | Hot-path user/item feature lookups |
 | Storage | Local filesystem | S3 | Data lake, model artifacts, FAISS indices |
@@ -263,6 +265,8 @@ By routing all ML inference through SageMaker, the following production capabili
 | boto3 | `endpoint_url='http://localhost:4566'` (LocalStack) | No `endpoint_url` |
 | FastAPI | `uvicorn` in Docker | AWS Lambda Web Adapter (same container) |
 | SageMaker SDK | `instance_type='local'` | `instance_type='ml.m5.large'` |
+| Experiment tracking | Local MLflow server | AWS Managed MLflow |
+| Hyperparameter tuning | Local Optuna SQLite | Optuna SQLite on EBS |
 | FAISS index | Local `.index` file | S3-backed, loaded into Lambda memory |
 
 ---
@@ -441,7 +445,7 @@ app = FastAPI(title='Fashion Recommendation API')
 async def get_recommendations(user_id: str, k: int = 10):
     # Same business logic regardless of environment
     candidates = faiss_search(user_id, top_k=100)
-    ranked     = catboost_rank(user_id, candidates, top_k=k)
+    ranked     = xgboost_rank(user_id, candidates, top_k=k)
     return {'user_id': user_id, 'recommendations': ranked}
 
 # Local development
@@ -528,7 +532,7 @@ services:
 ### Phase 1 — Local Development ($0 AWS cost)
 1. Set up Docker Compose: LocalStack + Redis + local Spark
 2. Build and validate feature pipeline on small dataset
-3. Train Two-Tower and CatBoost models locally
+3. Train Two-Tower and XGBoost models locally
 4. Build FAISS index and validate retrieval quality
 5. Run full inference pipeline end-to-end locally
 
@@ -536,7 +540,7 @@ services:
 1. `terraform apply` — spin up all AWS resources
 2. Upload processed data and model artifacts to S3
 3. Register models in SageMaker Model Registry
-4. Deploy SageMaker endpoints (Two-Tower + CatBoost)
+4. Deploy SageMaker endpoints (Two-Tower + XGBoost)
 5. Deploy Lambda (FAISS search + FastAPI API)
 6. Validate end-to-end on AWS
 7. `terraform destroy` — tear down everything when done

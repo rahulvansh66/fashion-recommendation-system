@@ -2,7 +2,7 @@
 
 ## V1 goal (source: `docs/system-design/v1/v1-hld.md`)
 
-Ship a learning-grade, production-pattern v1: personalized **top-10** recommendations via **Cache → Retrieve → Filter → Rank → Order** (Two-Tower + CatBoost + FAISS + Redis). Unified **FastAPI + Jinja2 + HTMX** on **ECS Fargate**, ingress via **API Gateway HTTP API** (no ALB). Offline: Glue/Step Functions + SageMaker Pipelines. Target ~**$53/mo** active; deploy/destroy with **Terraform**. Explicit demo: cache hit (~15 ms) vs miss (~190 ms) and SQS cache pre-warm.
+Ship a learning-grade, production-pattern v1: personalized **top-10** recommendations via **Cache → Retrieve → Filter → Rank → Order** (Two-Tower + XGBoost + FAISS + Redis). Unified **FastAPI + Jinja2 + HTMX** on **ECS Fargate**, ingress via **API Gateway HTTP API** (no ALB). Offline: Glue/Step Functions + SageMaker Pipelines. Target ~**$53/mo** active; deploy/destroy with **Terraform**. Explicit demo: cache hit (~15 ms) vs miss (~190 ms) and SQS cache pre-warm.
 
 ## Private docs — do not use
 
@@ -39,12 +39,20 @@ Implementation must be traceable to **v1-requirements** and align with **v1-hld*
 - `os.getenv()` only in `config.py`; model/feature params in `configs/` YAML.
 - Do not import from `src/` in notebooks; do not commit model artifacts or full dataset to git.
 
+## Infrastructure — Terraform only
 
-## Coding best practice
+- **Create** all AWS/cloud resources via **Terraform** (`infra/`). Do not provision resources manually in the AWS Console, CLI, or SDK unless the change is being added to Terraform in the same work.
+- **Modify, delete, or replace** resources only through Terraform (`terraform apply`, `terraform destroy`, etc.). Do not change or tear down infrastructure ad hoc outside Terraform.
+- **Track everything** — every durable resource must have a corresponding Terraform definition and state entry. No untracked or “orphan” resources.
+- **Single source of truth** — Terraform state (and the `.tf` code that produces it) is the authoritative record of what infrastructure exists. Docs, runbooks, and assumptions must match Terraform; if they diverge, update Terraform first.
 
-- Jupyter notebook should be orgainized with section and subsections, use markdown before each block to give description of what next code block does
-- Always add comments in code so that it'll be easy to understand when someone read the code
-- Add docstring in functions, which includes purpose of functions, arguments and return variable description
+## Coding best practice for jupyter notebooks or python codes
+
+- Structure Jupyter notebooks with clear sections and subsections. Add a Markdown cell before each code block describing what the next code block does.
+- Use multiple, smaller code blocks to separate logical steps, rather than placing large amounts of code in a single block.
+- Add clear, explanatory comments in code to help readers understand the logic and purpose of each step.
+- For every function, provide a detailed docstring that explains the function's purpose, parameters, and return values.
+- Ensure the notebook is well-organized and easy to follow, making it accessible for others to read, learn from, or maintain.
 
 ## Notes
 

@@ -139,7 +139,7 @@ with Diagram(
         retrieve = SageMaker("Stage 1a\nSageMaker\nuser tower")
         faiss = Lambda("Stage 1b\nLambda + FAISS\ntop-100 retrieval")
         filter_seen = ElastiCache("Stage 2\nRedis seen-set filter")
-        rank = SageMaker("Stage 3\nSageMaker\nCatBoost ranker")
+        rank = SageMaker("Stage 3\nSageMaker\nXGBoost ranker")
         order = Lambda("Stage 4\nDiversity reorder")
 
     # ---- 5) Data Stores ----
@@ -153,7 +153,7 @@ with Diagram(
         step_fn = StepFunctions("Step Functions\ndata + feature pipeline")
         glue = Glue("AWS Glue\nPySpark jobs")
         sm_pipeline = SageMaker("SageMaker Pipelines\ntrain-register-deploy")
-        sm_training = SageMakerTraining("SageMaker Training\ntwo-tower + CatBoost")
+        sm_training = SageMakerTraining("SageMaker Training\ntwo-tower + XGBoost")
         sm_registry = SageMakerModel("SageMaker Model Registry\napproval + versions")
         index_builder = Lambda("Lambda\nbuild FAISS index")
 

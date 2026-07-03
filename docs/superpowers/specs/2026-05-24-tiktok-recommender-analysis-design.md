@@ -15,7 +15,7 @@ This specification outlines the comprehensive technical analysis and documentati
 ### Success Criteria
 - Complete technical documentation covering preprocessing, model training, and inference
 - Local copies of all critical implementation files (notebooks + Python modules)
-- Clear understanding of two-tower model and CatBoost model implementations
+- Clear understanding of two-tower model and XGBoost model implementations
 - Integration guide showing how components work together in production
 
 ## Documentation Architecture
@@ -24,7 +24,7 @@ This specification outlines the comprehensive technical analysis and documentati
 ```
 docs/project-info/
 ├── feature-pipeline-analysis.md     # Stage 1: Data preprocessing & feature engineering
-├── training-pipeline-analysis.md    # Stage 2: Two-tower + CatBoost training processes  
+├── training-pipeline-analysis.md    # Stage 2: Two-tower + XGBoost training processes  
 ├── inference-pipeline-analysis.md   # Stage 3: Real-time recommendation serving
 ├── complete-system-architecture.md  # Stage 4: End-to-end system integration
 └── downloaded-implementations/      # Local copies of ALL key implementation files
@@ -71,7 +71,7 @@ docs/project-info/
   - Item encoder neural network design  
   - Embedding dimensions and layer configurations
   - Loss functions and optimization strategies
-- CatBoost model implementation
+- XGBoost model implementation
   - Hyperparameter configurations
   - Feature selection and engineering
   - Training procedures and validation
@@ -180,7 +180,7 @@ docs/project-info/
 ### Critical Dependencies
 - Access to decodingai-magazine repository files
 - Understanding of Hopsworks AI Lakehouse platform
-- Knowledge of two-tower and CatBoost model architectures
+- Knowledge of two-tower and XGBoost model architectures
 
 ### Execution Phases
 1. **Repository Analysis** (Day 1): File identification and download
