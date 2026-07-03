@@ -1,0 +1,63 @@
+# Frozen XGBoost ranker defaults (see docs/implementation-info/guides/ranking-model-training-guide.md).
+# After HPO, overwrite hyperparameter keys with study.best_params via export_ranking_best_params().
+
+n_estimators: 100
+learning_rate: 0.2
+max_depth: 10
+scale_pos_weight: 10
+subsample: 0.8
+colsample_bytree: 0.8
+min_child_weight: 1
+reg_lambda: 1.0
+early_stopping_rounds: 10
+
+# FR-BATCH-02 snap-date temporal split — ranking keeps positives and negatives per snap.
+temporal_split:
+  train_snaps:
+    - snap_date: "2020-03-24"
+      label_start: "2020-03-25"
+      label_end: "2020-03-31"
+    - snap_date: "2020-03-31"
+      label_start: "2020-04-01"
+      label_end: "2020-04-07"
+    - snap_date: "2020-04-07"
+      label_start: "2020-04-08"
+      label_end: "2020-04-14"
+  val_snaps:
+    - snap_date: "2020-04-14"
+      label_start: "2020-04-15"
+      label_end: "2020-04-21"
+    - snap_date: "2020-04-28"
+      label_start: "2020-04-29"
+      label_end: "2020-05-05"
+  test_snaps:
+    - snap_date: "2020-05-15"
+      label_start: "2020-05-16"
+      label_end: "2020-05-22"
+  drift_snaps:
+    - snap_date: "2020-05-31"
+      label_start: "2020-06-01"
+      label_end: "2020-06-07"
+    - snap_date: "2020-06-30"
+      label_start: "2020-07-01"
+      label_end: "2020-07-07"
+    - snap_date: "2020-07-31"
+      label_start: "2020-08-01"
+      label_end: "2020-08-07"
+    - snap_date: "2020-08-31"
+      label_start: "2020-09-01"
+      label_end: "2020-09-07"
+    - snap_date: "2020-09-15"
+      label_start: "2020-09-16"
+      label_end: "2020-09-22"
+
+sagemaker:
+  instance_type: ml.m5.large
+  use_spot: true
+  volume_size_gb: 30
+
+optuna:
+  study_name: ranking_hpo_v1
+  n_trials: 10
+  direction: maximize
+  objective_metric: val_aucpr
