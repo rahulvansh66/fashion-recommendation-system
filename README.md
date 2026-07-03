@@ -1,4 +1,4 @@
-# Fashion Recommendation System
+# Multi-Stage H&M Fashion Recommendation System
 
 <!-- Building a two-stage recommendation system that predicts purchase likelihood over the next 7 days, deployed on AWS. -->
 
